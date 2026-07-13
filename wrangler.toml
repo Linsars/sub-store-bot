@@ -1,0 +1,16 @@
+name = "sub-store-bot"
+main = "worker.mjs"
+compatibility_date = "2025-09-27"
+compatibility_flags = ["nodejs_compat"]
+
+# 一键部署时 KV Namespace 会自动创建（不写 id）
+# 部署完成后去 Dashboard 把 Namespace ID 填到 GitHub Secrets
+[[kv_namespaces]]
+binding = "KV"
+
+# 短链域名 — 部署后在 Cloudflare Dashboard 设置
+# 类型: plain_text
+# 值: https://your-domain.workers.dev
+# 或者用自定义域名
+# name = "CLIP_URL"
+# type = "plain_text"
