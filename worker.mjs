@@ -213,6 +213,55 @@ async function fetchSub(url) {
   return { text: bestText, ua: bestUa, count: bestCount };
 }
 
+// ==================== 手动解析 socks:// URI（Sub-Store 不识别） ====================
+
+function parseSocksUris(text) {
+  const proxies = [];
+  const lines = text.split(/\n/);
+  for (const line of lines) {
+    const s = line.trim();
+    if (!s.startsWith('socks://')) continue;
+    try {
+      const m = s.match(/^socks:\/\/([^?]+)(?:\?(.+))?$/);
+      if (!m) continue;
+      // 兼容 URL-safe base64（可能含 - _）
+      let b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+      // 补全 padding
+      while (b64.length % 4) b64 += '=';
+      const decoded = atob(b64);
+      const query = m[2] || '';
+      const remarksMatch = query.match(/remarks=([^&]+)/);
+      const remarks = remarksMatch ? decodeURIComponent(remarksMatch[1]) : ('socks5 ' + (decoded.split('@')[1] || ''));
+
+      // decoded 格式: user:password@host:port
+      const atIdx = decoded.lastIndexOf('@');
+      if (atIdx < 0) continue;
+      const creds = decoded.slice(0, atIdx);
+      const hostPort = decoded.slice(atIdx + 1);
+      const colonIdx = creds.indexOf(':');
+      const username = colonIdx >= 0 ? decodeURIComponent(creds.slice(0, colonIdx)) : decodeURIComponent(creds);
+      const password = colonIdx >= 0 ? creds.slice(colonIdx + 1) : '';
+      const hp = hostPort.split(':');
+      const server = hp[0];
+      const port = parseInt(hp[1] || '80', 10);
+
+      const proxy = {
+        type: 'socks5',
+        name: remarks,
+        server,
+        port,
+      };
+      if (username) proxy.username = username;
+      if (password) proxy.password = password;
+      proxies.push(proxy);
+    } catch (e) {
+      // 单条解析失败不影响其他
+      continue;
+    }
+  }
+  return proxies;
+}
+
 // ==================== 节点去重（按特征而非节点名） ====================
 
 function deduplicateProxies(proxies) {
@@ -229,6 +278,9 @@ function deduplicateProxies(proxies) {
         break;
       case 'trojan':
         key = p.server + ':' + p.port + ':' + p.type + ':' + p.password;
+        break;
+      case 'socks5':
+        key = p.server + ':' + p.port + ':' + p.type + ':' + (p.username || '') + ':' + (p.password || '');
         break;
       case 'hysteria2':
       case 'hy2':
@@ -414,12 +466,15 @@ async function onMsg(msg, env) {
   try {
     proxies = ProxyUtils.parse(subText);
   } catch (e) {
-    return tg('sendMessage', env.BOT_TOKEN, {
-      chat_id: cid,
-      text:
-        '\u274C \u89E3\u6790\u5931\u8D25: ' + e.message + '\n\n' +
-        '\u5982\u679C\u662F\u666E\u901A\u6587\u672C\uFF0C\u5DF2\u4FDD\u5B58\u4E3A\u77ED\u94FE',
-    });
+    proxies = null;
+  }
+
+  // Sub-Store 不解析 socks://，手动补充
+  if ((!proxies || proxies.length === 0)) {
+    const socksParsed = parseSocksUris(subText);
+    if (socksParsed.length > 0) {
+      proxies = socksParsed;
+    }
   }
 
   // 去重（基于节点特征而非节点名）
@@ -649,7 +704,19 @@ async function onCb(q, env) {
         reply_markup: mainKb(),
       });
     }
-    const proxies = deduplicateProxies(ProxyUtils.parse(u._lastSubInput));
+    let proxies;
+    try {
+      proxies = ProxyUtils.parse(u._lastSubInput);
+    } catch (e) {
+      proxies = null;
+    }
+    if ((!proxies || proxies.length === 0)) {
+      const socksParsed = parseSocksUris(u._lastSubInput);
+      if (socksParsed.length > 0) {
+        proxies = socksParsed;
+      }
+    }
+    proxies = deduplicateProxies(proxies || []);
     await clearAccState(uid, env);
     if (!proxies || proxies.length === 0) {
       return tg('editMessageText', env.BOT_TOKEN, {
@@ -862,7 +929,18 @@ export default {
             headers: { 'Content-Type': 'application/json', ...cors },
           });
         }
-        const proxies = ProxyUtils.parse(input);
+        let proxies;
+        try {
+          proxies = ProxyUtils.parse(input);
+        } catch (e) {
+          proxies = null;
+        }
+        if ((!proxies || proxies.length === 0)) {
+          const socksParsed = parseSocksUris(input);
+          if (socksParsed.length > 0) {
+            proxies = socksParsed;
+          }
+        }
         if (!proxies || proxies.length === 0) {
           return new Response(
             JSON.stringify({ success: false, count: 0, output: '' }),
