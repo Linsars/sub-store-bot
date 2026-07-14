@@ -10,18 +10,14 @@
  * 需要 CF 兼容性标志: nodejs_compat
  */
 
-import { ProxyUtils } from './proxy-utils.esm.js';
-
 // ==================== 工具函数 ====================
 
 function genId(len = 7) {
-  const c = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let r = '';
-  for (let i = 0; i < len; i++) r += c[Math.floor(Math.random() * c.length)];
-  return r;
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let s = '';
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
 }
-
-// ==================== Telegram 工具 ====================
 
 async function tg(method, token, body) {
   const r = await fetch('https://api.telegram.org/bot' + token + '/' + method, {
@@ -33,10 +29,10 @@ async function tg(method, token, body) {
 }
 
 function escapeHTML(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ==================== 键盘 ====================
+// ==================== 按钮布局 ====================
 
 function mainKb() {
   return {
@@ -47,7 +43,7 @@ function mainKb() {
       ],
       [
         { text: '\u{1F504} 格式选择', callback_data: 'fmt_menu' },
-        { text: '\u23F1 有效期', callback_data: 'ttl_menu' },
+        { text: '\u{23F1} 有效期', callback_data: 'ttl_menu' },
       ],
       [
         { text: '\u{1F4CB} 关于', callback_data: 'help' },
@@ -120,15 +116,14 @@ function resultKb(url, content) {
   return {
     inline_keyboard: [
       [
-        { text: '\u{1F4CB} \u590D\u5236\u94FE\u63A5', copy_text: { text: url } },
         { text: '\u{1F4E5} \u4E0B\u8F7D\u7ED3\u679C', callback_data: 'dl_result' },
-      ],
-      [
-        { text: '\u{1F4E4} \u5206\u4EAB', switch_inline_query: url },
         { text: '\u{1F517} \u6253\u5F00', url: url },
       ],
       [
+        { text: '\u{1F4E4} \u5206\u4EAB', url: 'https://t.me/share/url?url=' + encodeURIComponent(url) },
         { text: '\u{1F504} \u518D\u6B21\u8F6C\u6362', callback_data: 'conv_again' },
+      ],
+      [
         { text: '\u{1F3E0} \u4E3B\u9875', callback_data: 'menu' },
       ],
     ],
@@ -137,37 +132,29 @@ function resultKb(url, content) {
 
 // ==================== 用户状态管理 ====================
 
-const state = new Map();
+const stateMap = new Map();
 
 function getState(uid) {
-  if (!state.has(uid)) {
-    state.set(uid, { ttl: 0 }); // 默认永久
-  }
-  return state.get(uid);
+  if (!stateMap.has(uid)) stateMap.set(uid, {});
+  return stateMap.get(uid);
 }
 
-// ==================== 订阅拉取 ====================
+// ==================== 订阅拉取（多 UA 轮询） ====================
 
 const FETCH_UAS = [
-  'clashmeta/2.0',
-  'Quantumult%20X/1.0',
-  'Shadowrocket/2.0',
-  'Surge/5.0',
-  'Stash/3.0',
-  'Loon/3.0',
-  'sing-box/1.0',
-  'v2rayN/6.0',
-  'curl/8.0',
+  'clashmeta', 'quantumult%20x', 'shadowrocket', 'surge', 'stash', 'loon', 'sing-box', 'v2ray',
+  'mihomo/1.19.27', 'clash-verge', 'FLClash', 'ClashMeta', 'vzray',
+  'NekoBox/Android/1.4.1 (Prefer ClashMeta Format)', 'HiddifyNext', 'sing-box 1.13.0', 'Karing/1.2.21.2409 platform/ios',
+  'curl/8',
 ];
 
 async function fetchSub(url) {
-  // 并发请求所有 UA，取节点最多的
   const results = await Promise.allSettled(
     FETCH_UAS.map((ua) =>
-      fetch(url, { headers: { 'User-Agent': ua } }).then((r) => {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.text();
-      })
+      fetch(url, {
+        headers: { 'User-Agent': ua },
+        timeout: 15000,
+      }).then((r) => r.text())
     )
   );
 
@@ -180,11 +167,9 @@ async function fetchSub(url) {
     if (r.status !== 'fulfilled') continue;
 
     const text = r.value;
-    // 过滤掉非节点内容（错误提示、空白页等）
     if (!text || text.length < 50) continue;
     if (text.includes('访问被拒绝') || text.includes('不支持浏览器')) continue;
 
-    // 解析并统计节点数
     try {
       const proxies = ProxyUtils.parse(text);
       if (proxies && proxies.length > bestCount) {
@@ -193,11 +178,10 @@ async function fetchSub(url) {
         bestUa = FETCH_UAS[i];
       }
     } catch {
-      // 解析失败可能只是普通文本，跳过
+      // skip
     }
   }
 
-  // 如果所有 UA 都解析不到节点，保底：用内容最长的
   if (!bestText) {
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
@@ -213,53 +197,19 @@ async function fetchSub(url) {
   return { text: bestText, ua: bestUa, count: bestCount };
 }
 
-// ==================== 手动解析 socks:// URI（Sub-Store 不识别） ====================
+// ==================== Gost Tunnel 检测 ====================
 
-function parseSocksUris(text) {
-  const proxies = [];
+function isGostSocksContent(text) {
   const lines = text.split(/\n/);
+  let socksCount = 0;
+  let gostCount = 0;
   for (const line of lines) {
     const s = line.trim();
     if (!s.startsWith('socks://')) continue;
-    try {
-      const m = s.match(/^socks:\/\/([^?]+)(?:\?(.+))?$/);
-      if (!m) continue;
-      // 兼容 URL-safe base64（可能含 - _）
-      let b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
-      // 补全 padding
-      while (b64.length % 4) b64 += '=';
-      const decoded = atob(b64);
-      const query = m[2] || '';
-      const remarksMatch = query.match(/remarks=([^&]+)/);
-      const remarks = remarksMatch ? decodeURIComponent(remarksMatch[1]) : ('socks5 ' + (decoded.split('@')[1] || ''));
-
-      // decoded 格式: user:password@host:port
-      const atIdx = decoded.lastIndexOf('@');
-      if (atIdx < 0) continue;
-      const creds = decoded.slice(0, atIdx);
-      const hostPort = decoded.slice(atIdx + 1);
-      const colonIdx = creds.indexOf(':');
-      const username = colonIdx >= 0 ? decodeURIComponent(creds.slice(0, colonIdx)) : decodeURIComponent(creds);
-      const password = colonIdx >= 0 ? creds.slice(colonIdx + 1) : '';
-      const hp = hostPort.split(':');
-      const server = hp[0];
-      const port = parseInt(hp[1] || '80', 10);
-
-      const proxy = {
-        type: 'socks5',
-        name: remarks,
-        server,
-        port,
-      };
-      if (username) proxy.username = username;
-      if (password) proxy.password = password;
-      proxies.push(proxy);
-    } catch (e) {
-      // 单条解析失败不影响其他
-      continue;
-    }
+    socksCount++;
+    if (s.includes('gost=')) gostCount++;
   }
-  return proxies;
+  return socksCount > 0 && gostCount > 0 ? { total: socksCount, gostCount } : null;
 }
 
 // ==================== 节点去重（按特征而非节点名） ====================
@@ -278,9 +228,6 @@ function deduplicateProxies(proxies) {
         break;
       case 'trojan':
         key = p.server + ':' + p.port + ':' + p.type + ':' + p.password;
-        break;
-      case 'socks5':
-        key = p.server + ':' + p.port + ':' + p.type + ':' + (p.username || '') + ':' + (p.password || '');
         break;
       case 'hysteria2':
       case 'hy2':
@@ -312,10 +259,34 @@ async function clearAccState(uid, env) {
   await env.KV.delete('acc:' + uid);
 }
 
+// ==================== 编辑提示消息或发新消息 ====================
+
+async function replyOrEdit(u, cid, env, opts) {
+  if (u.promptCid && u.promptMid) {
+    const r = await tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: u.promptCid,
+      message_id: u.promptMid,
+      text: opts.text,
+      parse_mode: opts.parse_mode,
+      reply_markup: opts.reply_markup,
+    });
+    // 如果编辑失败（消息太旧被删了等），降级为新消息
+    if (r && r.ok) {
+      // 编辑成功，消息 ID 不变
+      return { ...r, message_id: u.promptMid, from_edit: true };
+    }
+  }
+  return tg('sendMessage', env.BOT_TOKEN, {
+    chat_id: cid,
+    text: opts.text,
+    parse_mode: opts.parse_mode,
+    reply_markup: opts.reply_markup,
+  });
+}
+
 // ==================== 保存到短链 ====================
 
 async function saveToClip(text, ttl, env) {
-  // 直接写 KV，不调外部 API
   const id = genId();
   const kvOpts = {};
   if (ttl > 0) kvOpts.expirationTtl = ttl < 60 ? 60 : ttl;
@@ -328,11 +299,8 @@ async function saveToClip(text, ttl, env) {
 function isAllowed(uid, env) {
   const adminId = env.ADMIN_ID;
   const allowedRaw = env.ALLOWED_USERS;
-  // 如果没设任何变量，开放使用（向后兼容）
   if (!adminId && !allowedRaw) return true;
-  // 检查管理员
   if (adminId && uid === adminId.trim()) return true;
-  // 检查白名单
   if (allowedRaw) {
     const list = allowedRaw.split(',').map((s) => s.trim());
     if (list.includes(uid)) return true;
@@ -370,7 +338,6 @@ async function onMsg(msg, env) {
 
   if (msg.text) {
     content = msg.text.trim();
-    // 判断是否为 URL
     if (content.startsWith('http://') || content.startsWith('https://')) {
       isRemote = true;
     }
@@ -397,33 +364,28 @@ async function onMsg(msg, env) {
   // 远程订阅：拉取内容
   let subText = content;
   if (isRemote) {
-    // 支持多条 URL（换行分隔）
     const urls = content.split(/\n/).map(s => s.trim()).filter(s => s.startsWith('http://') || s.startsWith('https://'));
 
     if (urls.length === 0) {
-      return tg('sendMessage', env.BOT_TOKEN, {
-        chat_id: cid,
+      return replyOrEdit(u, cid, env, {
         text: '\u274C \u672A\u68C0\u6D4B\u5230\u6709\u6548\u8BA2\u9605\u94FE\u63A5',
       });
     }
 
     if (urls.length === 1) {
       try {
-        await tg('sendMessage', env.BOT_TOKEN, {
-          chat_id: cid,
+        await replyOrEdit(u, cid, env, {
           text: '\u{1F504} \u6B63\u5728\u62C9\u53D6\u8BA2\u9605...',
         });
         const subResult = await fetchSub(urls[0]);
         subText = subResult.text;
       } catch (e) {
-        return tg('sendMessage', env.BOT_TOKEN, {
-          chat_id: cid,
+        return replyOrEdit(u, cid, env, {
           text: '\u274C \u62C9\u53D6\u5931\u8D25: ' + e.message,
         });
       }
     } else {
-      await tg('sendMessage', env.BOT_TOKEN, {
-        chat_id: cid,
+      await replyOrEdit(u, cid, env, {
         text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 ' + urls.length + ' \u4E2A\u8BA2\u9605...',
       });
 
@@ -442,8 +404,7 @@ async function onMsg(msg, env) {
       }
 
       if (texts.length === 0) {
-        return tg('sendMessage', env.BOT_TOKEN, {
-          chat_id: cid,
+        return replyOrEdit(u, cid, env, {
           text: '\u274C \u6240\u6709\u8BA2\u9605\u90FD\u62C9\u53D6\u5931\u8D25:\n' + errors.join('\n'),
         });
       }
@@ -454,8 +415,7 @@ async function onMsg(msg, env) {
       if (errors.length > 0) {
         report += '\n\n\u26A0\uFE0F \u5931\u8D25\u7684\u8BA2\u9605:\n' + errors.join('\n');
       }
-      await tg('sendMessage', env.BOT_TOKEN, {
-        chat_id: cid,
+      await replyOrEdit(u, cid, env, {
         text: report,
       });
     }
@@ -467,14 +427,7 @@ async function onMsg(msg, env) {
     proxies = ProxyUtils.parse(subText);
   } catch (e) {
     proxies = null;
-  }
-
-  // Sub-Store 不解析 socks://，手动补充
-  if ((!proxies || proxies.length === 0)) {
-    const socksParsed = parseSocksUris(subText);
-    if (socksParsed.length > 0) {
-      proxies = socksParsed;
-    }
+    // Sub-Store 可能因非标准格式抛出异常，不中断流程
   }
 
   // 去重（基于节点特征而非节点名）
@@ -493,24 +446,43 @@ async function onMsg(msg, env) {
   }
 
   if (!proxies || proxies.length === 0) {
-    // 没有节点 — 当作普通文本保存
+    // 检查是否包含 Gost Tunnel (socks:// 带 gost 参数)
+    const gostInfo = isGostSocksContent(subText);
+    if (gostInfo) {
+      // Gost Tunnel 节点：保持原始格式保存，不转换
+      try {
+        const id = await saveToClip(subText, ttl, env);
+        const clipUrl = (env.CLIP_URL || '') + '/share/' + id;
+        const ttlT = ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttl < 3600 ? Math.round(ttl / 60) + '\u5206\u949F' : Math.round(ttl / 3600) + '\u5C0F\u65F6';
+        const preview = subText.length > 200 ? subText.slice(0, 200) + '...' : subText;
+        u._lastContent = subText;
+        u._lastSubInput = subText;
+        return replyOrEdit(u, cid, env, {
+          text:
+            '\u2705 <b>\u5DF2\u4FDD\u5B58</b>\n\n' +
+            '\u{1F310} ' + gostInfo.total + ' \u4E2A <b>Gost Tunnel</b> \u8282\u70B9\uFF0C\u4FDD\u6301\u539F\u59CB\u683C\u5F0F\n' +
+            '\u26A0\uFE0F \u8FD9\u4E9B\u8282\u70B9\u65E0\u6CD5\u8F6C\u6362\u4E3A\u5176\u4ED6\u4EE3\u7406\u683C\u5F0F\uFF0C\u539F\u6587\u4EF6\u76F4\u63A5\u5BFC\u5165 Shadowrocket \u7B49\u5BA2\u6237\u7AEF\u5373\u53EF\u4F7F\u7528\n\n' +
+            '\u{1F517} <code>' + clipUrl + '</code>\n\n' +
+            '\u{1F4CB} \u9884\u89C8:\n<code>' + escapeHTML(preview) + '</code>\n\n' +
+            '\u23F1 ' + ttlT,
+          parse_mode: 'HTML',
+          reply_markup: resultKb(clipUrl),
+        });
+      } catch (e) {
+        return replyOrEdit(u, cid, env, {
+          text: '\u274C \u4FDD\u5B58\u5931\u8D25: ' + e.message,
+        });
+      }
+    }
+
+    // 纯文本：保存为短链
     try {
       const id = await saveToClip(subText, ttl, env);
-      const clipUrl =
-        (env.CLIP_URL || '') + '/share/' + id;
-      const preview =
-        subText.length > 150
-          ? subText.slice(0, 150) + '...'
-          : subText;
-      const ttlT =
-        ttl === 0
-          ? '\u6C38\u4E0D\u8FC7\u671F'
-          : ttl < 3600
-          ? Math.round(ttl / 60) + '\u5206\u949F'
-          : Math.round(ttl / 3600) + '\u5C0F\u65F6';
+      const clipUrl = (env.CLIP_URL || '') + '/share/' + id;
+      const preview = subText.length > 150 ? subText.slice(0, 150) + '...' : subText;
+      const ttlT = ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttl < 3600 ? Math.round(ttl / 60) + '\u5206\u949F' : Math.round(ttl / 3600) + '\u5C0F\u65F6';
       u._lastContent = subText;
-      return tg('sendMessage', env.BOT_TOKEN, {
-        chat_id: cid,
+      return replyOrEdit(u, cid, env, {
         text:
           '\u2705 <b>\u5DF2\u4FDD\u5B58</b>\n\n' +
           '\u{1F517} <code>' + clipUrl + '</code>\n\n' +
@@ -520,8 +492,7 @@ async function onMsg(msg, env) {
         reply_markup: resultKb(clipUrl),
       });
     } catch (e) {
-      return tg('sendMessage', env.BOT_TOKEN, {
-        chat_id: cid,
+      return replyOrEdit(u, cid, env, {
         text: '\u274C \u4FDD\u5B58\u5931\u8D25: ' + e.message,
       });
     }
@@ -536,7 +507,6 @@ async function onMsg(msg, env) {
     .map(([k, v]) => k + ': ' + v)
     .join(', ');
 
-  // 缓存订阅内容供后续转换用
   u._lastSubInput = subText;
   u._lastProxies = proxies;
 
@@ -544,7 +514,6 @@ async function onMsg(msg, env) {
     ? '\n\u{1F504} <b>\u7D2F\u8BA1\u6A21\u5F0F</b> \u2014 \u53D1\u9001\u66F4\u591A\u8BA2\u9605\u5185\u5BB9\u5C06\u81EA\u52A8\u5408\u5E76\uFF0C\u70B9\u51FB\u683C\u5F0F\u6309\u94AE\u5F00\u59CB\u8F6C\u6362\n'
     : '';
 
-  // 有累计消息则编辑，否则新发
   if (!isRemote && accState && accState.fmtMsg && accState.fmtMsg.id) {
     await tg('editMessageText', env.BOT_TOKEN, {
       chat_id: accState.fmtMsg.cid,
@@ -560,8 +529,7 @@ async function onMsg(msg, env) {
     });
     await saveAccState(uid, env, { proxies, fmtMsg: accState.fmtMsg });
   } else {
-    const sent = await tg('sendMessage', env.BOT_TOKEN, {
-      chat_id: cid,
+    const sent = await replyOrEdit(u, cid, env, {
       text:
         '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
         '\u{1F4CA} \u8282\u70B9\u6570: <b>' + proxies.length + '</b>\n' +
@@ -571,10 +539,11 @@ async function onMsg(msg, env) {
       parse_mode: 'HTML',
       reply_markup: fmtKb(),
     });
+    const msgId = sent?.result?.message_id || (sent?.from_edit ? u.promptMid : null);
     await saveAccState(uid, env, {
       proxies,
-      fmtMsg: (sent && sent.ok && sent.result)
-        ? { cid: cid, id: sent.result.message_id }
+      fmtMsg: msgId
+        ? { cid: cid, id: msgId }
         : null,
     });
   }
@@ -610,6 +579,8 @@ async function onCb(q, env) {
 
   if (d === 'input_url') {
     u.state = 'URL';
+    u.promptCid = cid;
+    u.promptMid = mid;
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
@@ -621,39 +592,14 @@ async function onCb(q, env) {
 
   if (d === 'input_file') {
     u.state = 'FILE';
+    u.promptCid = cid;
+    u.promptMid = mid;
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
-      text: '\u{1F4CE} \u8BF7\u53D1\u9001\u8282\u70B9\u6587\u672C\u6216\u6587\u4EF6',
+      text: '\u{1F4CE} \u8BF7\u53D1\u9001\u8282\u70B9\u6587\u4EF6\u6216\u7C98\u8D34\u5185\u5BB9',
       parse_mode: 'HTML',
       reply_markup: backKb(),
-    });
-  }
-
-  if (d === 'ttl_menu') {
-    return tg('editMessageText', env.BOT_TOKEN, {
-      chat_id: cid,
-      message_id: mid,
-      text: '\u23F1 <b>\u6709\u6548\u671F</b>',
-      parse_mode: 'HTML',
-      reply_markup: ttlKb(),
-    });
-  }
-
-  if (d.startsWith('ttl_set:')) {
-    u.ttl = parseInt(d.split(':')[1]);
-    const lbl =
-      u.ttl === 0
-        ? '\u6C38\u4E0D\u8FC7\u671F'
-        : u.ttl < 3600
-        ? Math.round(u.ttl / 60) + '\u5206\u949F'
-        : Math.round(u.ttl / 3600) + '\u5C0F\u65F6';
-    return tg('editMessageText', env.BOT_TOKEN, {
-      chat_id: cid,
-      message_id: mid,
-      text: '\u2705 \u6709\u6548\u671F: <b>' + lbl + '</b>',
-      parse_mode: 'HTML',
-      reply_markup: mainKb(),
     });
   }
 
@@ -661,40 +607,35 @@ async function onCb(q, env) {
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
-      text: '\u{1F504} <b>\u9009\u62E9\u8F93\u51FA\u683C\u5F0F</b>\n\n' +
-        '\u652F\u6301 12 \u79CD\u5BA2\u6237\u7AEF\u683C\u5F0F',
+      text: '\u{1F504} \u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
       parse_mode: 'HTML',
       reply_markup: fmtKb(),
     });
   }
 
-  if (d === 'dl_result') {
-    if (!u._lastContent) {
-      return tg('answerCallbackQuery', env.BOT_TOKEN, {
-        callback_query_id: q.id,
-        text: '\u6682\u65E0\u8F6C\u6362\u7ED3\u679C',
-        show_alert: true,
-      });
-    }
-
-    // 发送结果文件 (用 multipart/form-data)
-    const formData = new FormData();
-    formData.append('chat_id', String(cid));
-    formData.append('document', new Blob([u._lastContent], { type: 'text/plain' }), 'config.txt');
-    formData.append('caption', '\u{1F4E5} \u8F6C\u6362\u7ED3\u679C');
-
-    await fetch('https://api.telegram.org/bot' + env.BOT_TOKEN + '/sendDocument', {
-      method: 'POST',
-      body: formData,
+  if (d === 'ttl_menu') {
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: '\u{23F1} \u5F53\u524D: ' + (u.ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : u.ttl ? (u.ttl < 3600 ? Math.round(u.ttl / 60) + '\u5206\u949F' : Math.round(u.ttl / 3600) + '\u5C0F\u65F6') : '\u9ED8\u8BA4'),
+      parse_mode: 'HTML',
+      reply_markup: ttlKb(),
     });
+  }
 
-    return tg('answerCallbackQuery', env.BOT_TOKEN, {
-      callback_query_id: q.id,
-      text: '\u5DF2\u53D1\u9001\u6587\u4EF6',
+  if (d.startsWith('ttl_set:')) {
+    u.ttl = parseInt(d.split(':')[1]);
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: '\u2705 \u5DF2\u8BBE\u7F6E: ' + (u.ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : u.ttl < 3600 ? Math.round(u.ttl / 60) + '\u5206\u949F' : Math.round(u.ttl / 3600) + '\u5C0F\u65F6'),
+      parse_mode: 'HTML',
+      reply_markup: mainKb(),
     });
   }
 
   if (d === 'conv_again') {
+    // 再次转换：用缓存内容重新解析，回到格式选择
     if (!u._lastSubInput) {
       return tg('editMessageText', env.BOT_TOKEN, {
         chat_id: cid,
@@ -704,20 +645,38 @@ async function onCb(q, env) {
         reply_markup: mainKb(),
       });
     }
+
+    // 重新解析
     let proxies;
     try {
       proxies = ProxyUtils.parse(u._lastSubInput);
     } catch (e) {
       proxies = null;
     }
-    if ((!proxies || proxies.length === 0)) {
-      const socksParsed = parseSocksUris(u._lastSubInput);
-      if (socksParsed.length > 0) {
-        proxies = socksParsed;
+
+    if (proxies && proxies.length > 0) {
+      proxies = deduplicateProxies(proxies);
+    } else {
+      // 检查是否为 Gost Tunnel 内容（不可转换）
+      const gostInfo = isGostSocksContent(u._lastSubInput);
+      if (gostInfo) {
+        return tg('editMessageText', env.BOT_TOKEN, {
+          chat_id: cid,
+          message_id: mid,
+          text:
+            '\u26A0\uFE0F <b>Gost Tunnel</b> \u8282\u70B9\u65E0\u6CD5\u8F6C\u6362\u4E3A\u5176\u4ED6\u683C\u5F0F\n\n' +
+            '\u{1F310} \u68C0\u6D4B\u5230 ' + gostInfo.total + ' \u4E2A Gost Tunnel \u8282\u70B9\uFF08' +
+            (gostInfo.gostCount === gostInfo.total ? '\u5168\u90E8' : gostInfo.gostCount + '/' + gostInfo.total) + '\u5E26 gost \u53C2\u6570\uFF09\n\n' +
+            '\u539F\u59CB\u6587\u4EF6\u5DF2\u4FDD\u5B58\u4E3A\u77ED\u94FE\uFF0C\u76F4\u63A5\u5BFC\u5165 Shadowrocket \u7B49\u5BA2\u6237\u7AEF\u5373\u53EF\u4F7F\u7528',
+          parse_mode: 'HTML',
+          reply_markup: mainKb(),
+        });
       }
+      proxies = [];
     }
-    proxies = deduplicateProxies(proxies || []);
+
     await clearAccState(uid, env);
+
     if (!proxies || proxies.length === 0) {
       return tg('editMessageText', env.BOT_TOKEN, {
         chat_id: cid,
@@ -727,6 +686,7 @@ async function onCb(q, env) {
         reply_markup: mainKb(),
       });
     }
+
     u._lastProxies = proxies;
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
@@ -754,7 +714,6 @@ async function onCb(q, env) {
       });
     }
 
-    // 转换
     let output;
     try {
       output = ProxyUtils.produce(u._lastProxies, fmt);
@@ -778,7 +737,6 @@ async function onCb(q, env) {
       });
     }
 
-    // 先发 "转换中" 提示
     await tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
@@ -786,19 +744,12 @@ async function onCb(q, env) {
       parse_mode: 'HTML',
     });
 
-    // 保存到短链
     try {
       const id = await saveToClip(String(output), u.ttl || 300, env);
       u._lastContent = String(output);
-      const clipUrl =
-        (env.CLIP_URL || '') + '/share/' + id;
+      const clipUrl = (env.CLIP_URL || '') + '/share/' + id;
 
-      const ttlT =
-        (u.ttl === 0)
-          ? '\u6C38\u4E0D\u8FC7\u671F'
-          : (u.ttl || 300) < 3600
-          ? Math.round((u.ttl || 300) / 60) + '\u5206\u949F'
-          : Math.round((u.ttl || 300) / 3600) + '\u5C0F\u65F6';
+      const ttlT = (u.ttl === 0) ? '\u6C38\u4E0D\u8FC7\u671F' : (u.ttl || 300) < 3600 ? Math.round((u.ttl || 300) / 60) + '\u5206\u949F' : Math.round((u.ttl || 300) / 3600) + '\u5C0F\u65F6';
 
       await tg('editMessageText', env.BOT_TOKEN, {
         chat_id: cid,
@@ -812,18 +763,11 @@ async function onCb(q, env) {
         reply_markup: resultKb(clipUrl),
       });
     } catch (e) {
-      // 保存失败，直接返回转换结果
-      const preview =
-        String(output).length > 300
-          ? String(output).slice(0, 300) + '...'
-          : String(output);
-
+      const preview = String(output).length > 300 ? String(output).slice(0, 300) + '...' : String(output);
       await tg('editMessageText', env.BOT_TOKEN, {
         chat_id: cid,
         message_id: mid,
-        text:
-          '\u{1F504} <b>' + fmtLabel + '</b>\n\n' +
-          '<code>' + escapeHTML(preview) + '</code>',
+        text: '\u{1F504} <b>' + fmtLabel + '</b>\n\n<code>' + escapeHTML(preview) + '</code>',
         parse_mode: 'HTML',
         reply_markup: mainKb(),
       });
@@ -856,64 +800,54 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
 
-    // CORS
-    const cors = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    };
-    if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
+    if (request.method === 'OPTIONS') return new Response('', { headers: cors });
 
-    // Webhook
-    // POST /save — 剪贴板保存 (jtb-clip 兼容接口)
+    // API: 文本保存 (jtb-clip 兼容)
     if (path === '/save' && request.method === 'POST') {
       try {
-        const body = await request.json();
-        const text = body.text;
-        const ttl = body.ttl !== undefined ? body.ttl : 0;
-        if (!text) {
-          return new Response(JSON.stringify({ error: 'text required' }), {
-            status: 400, headers: { 'Content-Type': 'application/json', ...cors },
-          });
-        }
-        const id = await saveToClip(text, ttl, env);
-        return new Response(JSON.stringify({ id, ttl }), {
-          headers: { 'Content-Type': 'application/json', ...cors },
-        });
+        const body = await request.text();
+        const id = genId();
+        await env.KV.put('share_' + id, JSON.stringify({ text: body }), { expirationTtl: 86400 });
+        const clipUrl = (env.CLIP_URL || '') + '/share/' + id;
+        return new Response(JSON.stringify({ success: true, id, url: clipUrl }), { headers: { 'Content-Type': 'application/json', ...cors } });
       } catch (e) {
-        return new Response(JSON.stringify({ error: e.message, stack: e.stack }), {
-          status: 500, headers: { 'Content-Type': 'application/json', ...cors },
-        });
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json', ...cors } });
       }
     }
 
-    // GET /share/:id — 获取剪贴板内容 (原始内容，供代理客户端导入)
-    const shareMatch = path.match(/^\/share\/([a-zA-Z0-9]+)$/);
-    if (request.method === 'GET' && shareMatch) {
-      const id = shareMatch[1];
-      try {
-        const raw = await env.KV.get('share_' + id);
-        if (!raw) {
-          return new Response('Not found', { status: 404 });
-        }
-        const data = JSON.parse(raw);
-        return new Response(data.text, {
-          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-        });
-      } catch (e) {
-        return new Response(raw || 'Error', { status: 500 });
-      }
+    // API: 短链读取
+    if (path.startsWith('/share/')) {
+      const id = path.replace('/share/', '');
+      const raw = await env.KV.get('share_' + id, { type: 'json' });
+      if (!raw) return new Response('Not found', { status: 404 });
+      return new Response(raw.text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     }
 
+    // Telegram Webhook
     if (path === '/webhook' && request.method === 'POST') {
-      try {
-        const u = await request.json();
-        if (u.message) ctx.waitUntil(onMsg(u.message, env));
-        if (u.callback_query) ctx.waitUntil(onCb(u.callback_query, env));
-      } catch (e) {
-        console.error('webhook error:', e);
+      const body = await request.json();
+      if (!body) return new Response('ok');
+
+      // 验证 webhook secret
+      if (env.WEBHOOK_SECRET && env.WEBHOOK_SECRET !== url.searchParams.get('secret')) {
+        return new Response('unauthorized', { status: 401 });
       }
+
+      ctx.waitUntil(
+        (async () => {
+          try {
+            if (body.message) await onMsg(body.message, env);
+            else if (body.callback_query) await onCb(body.callback_query, env);
+          } catch (e) {
+            await tg('sendMessage', env.BOT_TOKEN, {
+              chat_id: String(body.message?.from?.id || body.callback_query?.from?.id || ''),
+              text: '\u274C \u62A5\u9519: ' + e.message,
+            });
+          }
+        })()
+      );
       return new Response('ok');
     }
 
@@ -935,12 +869,7 @@ export default {
         } catch (e) {
           proxies = null;
         }
-        if ((!proxies || proxies.length === 0)) {
-          const socksParsed = parseSocksUris(input);
-          if (socksParsed.length > 0) {
-            proxies = socksParsed;
-          }
-        }
+
         if (!proxies || proxies.length === 0) {
           return new Response(
             JSON.stringify({ success: false, count: 0, output: '' }),
