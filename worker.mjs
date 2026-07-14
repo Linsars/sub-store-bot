@@ -42,11 +42,11 @@ function mainKb() {
         { text: '\u{1F4CE} 本地订阅', callback_data: 'input_file' },
       ],
       [
-        { text: '\u{1F504} 格式选择', callback_data: 'fmt_menu' },
+        { text: '\u{1F310} UA 轮询', callback_data: 'ua_menu' },
         { text: '\u{23F1} 有效期', callback_data: 'ttl_menu' },
       ],
       [
-        { text: '\u{1F4CB} 关于', callback_data: 'help' },
+        { text: '\u{1F4CB} 我的短链', callback_data: 'my_links_0' },
       ],
     ],
   };
@@ -67,23 +67,30 @@ const FORMAT_OPTIONS = [
   { id: 'json', label: 'JSON' },
 ];
 
-function fmtKb(custom) {
+// Gost Tunnel 仅支持的格式
+const GOST_FORMATS = ['shadowrocket', 'uri'];
+
+function fmtKb(allowed, convTtl, ttlDefault) {
+  const formats = allowed || FORMAT_OPTIONS;
   const rows = [];
   let row = [];
-  for (const f of FORMAT_OPTIONS) {
-    const label = custom?.get(f.id) === true ? '\u2705 ' + f.label : f.label;
-    row.push({ text: label, callback_data: 'conv_fmt:' + f.id });
+  for (const f of formats) {
+    row.push({ text: f.label, callback_data: 'conv_fmt:' + f.id });
     if (row.length === 2) {
       rows.push(row);
       row = [];
     }
   }
   if (row.length) rows.push(row);
+  const ttlVal = convTtl !== undefined && convTtl !== null ? convTtl : (ttlDefault !== undefined ? ttlDefault : 0);
+  const ttlLabel = ttlVal === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttlVal < 3600 ? Math.round(ttlVal / 60) + '\u5206\u949F' : Math.round(ttlVal / 3600) + '\u5C0F\u65F6';
+  rows.push([{ text: '\u23F1 \u6642\u6548: ' + ttlLabel, callback_data: 'conv_ttl_menu' }]);
   rows.push([{ text: '\u2190 返回', callback_data: 'menu' }]);
   return { inline_keyboard: rows };
 }
 
-function ttlKb(current) {
+function ttlKb(current, prefix) {
+  const cbPrefix = prefix || 'ttl_set:';
   const opts = [
     { s: 0, l: '\u6C38\u4E0D\u8FC7\u671F' },
     { s: 300, l: '5\u5206\u949F' },
@@ -97,7 +104,7 @@ function ttlKb(current) {
   const rows = [];
   let row = [];
   for (const o of opts) {
-    row.push({ text: o.l, callback_data: 'ttl_set:' + o.s });
+    row.push({ text: o.l, callback_data: cbPrefix + o.s });
     if (row.length === 2) {
       rows.push(row);
       row = [];
@@ -112,7 +119,7 @@ function backKb() {
   return { inline_keyboard: [[{ text: '\u2190 返回', callback_data: 'menu' }]] };
 }
 
-function resultKb(url, content) {
+function resultKb(url) {
   return {
     inline_keyboard: [
       [
@@ -130,6 +137,20 @@ function resultKb(url, content) {
   };
 }
 
+// ==================== 主页文字 ====================
+
+function mainPageText() {
+  return '<b>\u{1F916} Sub-Store Bot</b>\n\n' +
+    '\u{1F310} <b>\u8FDC\u7A0B\u8BA2\u9605</b> \u2014 \u53D1\u94FE\u63A5\uFF0C\u81EA\u52A8\u62C9\u53D6\u8F6C\u6362\n' +
+    '\u{1F4CE} <b>\u672C\u5730\u8BA2\u9605</b> \u2014 \u53D1\u8282\u70B9/\u6587\u4EF6\uFF0C\u81EA\u52A8\u89E3\u6790\u8F6C\u6362\n' +
+    '\u2705 \u666E\u901A\u6587\u672C \u2014 \u81EA\u52A8\u4FDD\u5B58\u4E3A\u77ED\u94FE\n\n' +
+    '\u{1F4E6} <b>\u8F93\u51FA\u683C\u5F0F (12\u79CD)</b>\n' +
+    'Clash Meta / QX / Surge / Shadowrocket\n' +
+    'sing-box / V2Ray / Loon / Stash\n' +
+    'Surfboard / Egern / URI / JSON\n\n' +
+    '\u{1F517} \u8F6C\u6362\u7ED3\u679C\u4EE5\u77ED\u94FE\u5F62\u5F0F\u8FD4\u56DE';
+}
+
 // ==================== 用户状态管理 ====================
 
 const stateMap = new Map();
@@ -139,18 +160,101 @@ function getState(uid) {
   return stateMap.get(uid);
 }
 
-// ==================== 订阅拉取（多 UA 轮询） ====================
+// ==================== 订阅拉取（多 UA 轮询，支持用户自定义） ====================
 
 const FETCH_UAS = [
   'clashmeta', 'quantumult%20x', 'shadowrocket', 'surge', 'stash', 'loon', 'sing-box', 'v2ray',
-  'mihomo/1.19.27', 'clash-verge', 'FLClash', 'ClashMeta', 'vzray',
+  'mihomo/1.19.27', 'clash-verge', 'FLClash', 'vzray',
   'NekoBox/Android/1.4.1 (Prefer ClashMeta Format)', 'HiddifyNext', 'sing-box 1.13.0', 'Karing/1.2.21.2409 platform/ios',
   'curl/8',
 ];
 
-async function fetchSub(url) {
+// 获取用户 UA 配置
+async function getUaConfig(uid, env) {
+  try {
+    const raw = await env.KV.get('ua:' + uid, { type: 'json' });
+    return raw || { custom: [], disabled: [] };
+  } catch { return { custom: [], disabled: [] }; }
+}
+
+async function saveUaConfig(uid, env, cfg) {
+  await env.KV.put('ua:' + uid, JSON.stringify(cfg));
+}
+
+function showUaSettings(cid, mid, uid, env) {
+  return getUaConfig(uid, env).then(async (cfg) => {
+    let text = '<b>\u{1F310} UA \u8F6E\u8BE2 \u8BBE\u7F6E</b>\n\n';
+    text += '\u{1F504} \u5F53\u524D <b>' + (cfg.custom || []).length + '</b> \u4E2A\u81EA\u5B9A\u4E49\u3001<b>' + (FETCH_UAS.length - (cfg.disabled || []).length) + '</b>/' + FETCH_UAS.length + ' \u4E2A\u9ED8\u8BA4\n\n';
+    const rows = [];
+    // 默认 UA — 两列
+    let row = [];
+    for (let i = 0; i < FETCH_UAS.length; i++) {
+      const enabled = !(cfg.disabled || []).includes(i);
+      const icon = enabled ? '\u2705' : '\u274C';
+      const ua = FETCH_UAS[i];
+      const short = ua.length > 14 ? ua.slice(0, 12) + '..' : ua;
+      row.push({ text: icon + ' ' + short, callback_data: 'ua_toggle:' + i });
+      if (row.length === 2) {
+        rows.push(row);
+        row = [];
+      }
+    }
+    if (row.length) rows.push(row);
+    // 自定义 UA — 每行一个，右侧带删除
+    for (let ci = 0; ci < (cfg.custom || []).length; ci++) {
+      const ua = cfg.custom[ci];
+      const short = ua.length > 20 ? ua.slice(0, 18) + '..' : ua;
+      rows.push([
+        { text: '\u{1F4DD} ' + escapeHTML(short), callback_data: 'noop' },
+        { text: '\u{1F5D1}', callback_data: 'ua_del:' + ci },
+      ]);
+    }
+    rows.push([
+      { text: '\u2795 \u6DFB\u52A0\u81EA\u5B9A\u4E49', callback_data: 'ua_add' },
+      { text: '\u21A9 \u6062\u590D\u9ED8\u8BA4', callback_data: 'ua_reset' },
+    ]);
+    rows.push([{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }]);
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: text,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: rows },
+    });
+  });
+}
+
+// 构建有效 UA 列表（自定义 UA 与默认 UA 不区分大小写去重）
+async function getUaList(uid, env) {
+  const cfg = await getUaConfig(uid, env);
+  const disabledSet = new Set(cfg.disabled || []);
+  const list = [];
+  const seen = new Set();
+  for (let i = 0; i < FETCH_UAS.length; i++) {
+    if (!disabledSet.has(i)) {
+      const ua = FETCH_UAS[i];
+      list.push(ua);
+      seen.add(ua.toLowerCase());
+    }
+  }
+  for (const ua of (cfg.custom || [])) {
+    if (!seen.has(ua.toLowerCase())) {
+      list.push(ua);
+      seen.add(ua.toLowerCase());
+    }
+  }
+  return list;
+}
+
+async function fetchSub(url, uid, env) {
+  const uaList = await getUaList(uid, env);
+  if (uaList.length === 0) {
+    // 全部禁用了 -> 用第一个默认
+    uaList.push(FETCH_UAS[0]);
+  }
+
   const results = await Promise.allSettled(
-    FETCH_UAS.map((ua) =>
+    uaList.map((ua) =>
       fetch(url, {
         headers: { 'User-Agent': ua },
         timeout: 15000,
@@ -165,21 +269,17 @@ async function fetchSub(url) {
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     if (r.status !== 'fulfilled') continue;
-
     const text = r.value;
     if (!text || text.length < 50) continue;
     if (text.includes('访问被拒绝') || text.includes('不支持浏览器')) continue;
-
     try {
       const proxies = ProxyUtils.parse(text);
       if (proxies && proxies.length > bestCount) {
         bestCount = proxies.length;
         bestText = text;
-        bestUa = FETCH_UAS[i];
+        bestUa = uaList[i];
       }
-    } catch {
-      // skip
-    }
+    } catch { /* skip */ }
   }
 
   if (!bestText) {
@@ -189,7 +289,7 @@ async function fetchSub(url) {
       const text = r.value;
       if (text.length > bestText.length && !text.includes('访问被拒绝') && !text.includes('不支持浏览器')) {
         bestText = text;
-        bestUa = FETCH_UAS[i];
+        bestUa = uaList[i];
       }
     }
   }
@@ -210,6 +310,22 @@ function isGostSocksContent(text) {
     if (s.includes('gost=')) gostCount++;
   }
   return socksCount > 0 && gostCount > 0 ? { total: socksCount, gostCount } : null;
+}
+
+// 从文本中提取 Gost 行，返回 { gostLines, otherLines }
+function splitGostLines(text) {
+  const lines = text.split(/\n/);
+  const gostLines = [];
+  const otherLines = [];
+  for (const line of lines) {
+    const s = line.trim();
+    if (s.startsWith('socks://') && s.includes('gost=')) {
+      gostLines.push(s);
+    } else {
+      otherLines.push(line);
+    }
+  }
+  return { gostLines, otherLines: otherLines.join('\n') };
 }
 
 // ==================== 节点去重（按特征而非节点名） ====================
@@ -270,9 +386,7 @@ async function replyOrEdit(u, cid, env, opts) {
       parse_mode: opts.parse_mode,
       reply_markup: opts.reply_markup,
     });
-    // 如果编辑失败（消息太旧被删了等），降级为新消息
     if (r && r.ok) {
-      // 编辑成功，消息 ID 不变
       return { ...r, message_id: u.promptMid, from_edit: true };
     }
   }
@@ -284,6 +398,47 @@ async function replyOrEdit(u, cid, env, opts) {
   });
 }
 
+// ==================== 用户短链索引 ====================
+
+async function getUserLinks(uid, env) {
+  try {
+    const raw = await env.KV.get('ulinks:' + uid, { type: 'json' });
+    return raw || [];
+  } catch { return []; }
+}
+
+async function addUserLink(uid, env, entry) {
+  const links = await getUserLinks(uid, env);
+  links.unshift(entry);
+  if (links.length > 50) links.length = 50;
+  await env.KV.put('ulinks:' + uid, JSON.stringify(links));
+}
+
+async function removeUserLink(uid, env, id) {
+  const links = await getUserLinks(uid, env);
+  const idx = links.findIndex(l => l.id === id);
+  if (idx === -1) return false;
+  links.splice(idx, 1);
+  await env.KV.put('ulinks:' + uid, JSON.stringify(links));
+  // 同时删除 KV 中的短链内容
+  await env.KV.delete('share_' + id);
+  return true;
+}
+
+function linkStatusIcon(entry) {
+  if (entry.ttl === 0) return '\u{1F535}';  // 🔵 永久
+  if (!entry.expiresAt) return '\u{1F535}'; // 安全兜底
+  const now = Date.now();
+  if (now >= entry.expiresAt) return '\u{26AB}'; // ⚫ 已过期
+  const remain = Math.round((entry.expiresAt - now) / 60000);
+  if (remain < 60) return '\u{1F7E0} ' + remain + 'm'; // 🟠 <1h
+  return '\u{1F7E0} ' + Math.round(remain / 60) + 'h'; // 🟠
+}
+
+function getEffectiveTtl(u) {
+  return u._convTtl !== undefined && u._convTtl !== null ? u._convTtl : (u.ttl !== undefined ? u.ttl : 0);
+}
+
 // ==================== 保存到短链 ====================
 
 async function saveToClip(text, ttl, env) {
@@ -292,6 +447,21 @@ async function saveToClip(text, ttl, env) {
   if (ttl > 0) kvOpts.expirationTtl = ttl < 60 ? 60 : ttl;
   await env.KV.put('share_' + id, JSON.stringify({ text }), kvOpts);
   return id;
+}
+
+// 保存短链并记录到用户索引
+async function saveToClipAndTrack(text, ttl, env, uid, extra) {
+  const id = await saveToClip(text, ttl, env);
+  const clipUrl = (env.CLIP_URL || '') + '/share/' + id;
+  const entry = {
+    id,
+    ...extra,
+    ttl: ttl,
+    createdAt: Date.now(),
+    expiresAt: ttl > 0 ? Date.now() + ttl * 1000 : null,
+  };
+  await addUserLink(uid, env, entry);
+  return { id, url: clipUrl };
 }
 
 // ==================== 用户白名单 ====================
@@ -321,13 +491,32 @@ async function onMsg(msg, env) {
     await clearAccState(uid, env);
     return tg('sendMessage', env.BOT_TOKEN, {
       chat_id: cid,
-      text:
-        '<b>\u{1F916} Sub-Store Bot</b>\n\n' +
-        '\u{1F310} <b>\u8FDC\u7A0B\u8BA2\u9605</b> \u2014 \u53D1\u9001\u8BA2\u9605\u94FE\u63A5\n' +
-        '\u{1F4CE} <b>\u672C\u5730\u8BA2\u9605</b> \u2014 \u53D1\u9001\u8282\u70B9\u6216\u6587\u4EF6\n' +
-        '\u{1F504} \u652F\u6301 12 \u79CD\u8F93\u51FA\u683C\u5F0F\n\n' +
-        '\u{1F517} \u8F6C\u6362\u7ED3\u679C\u4EE5\u77ED\u94FE\u5F62\u5F0F\u8FD4\u56DE',
+      text: mainPageText(),
       parse_mode: 'HTML',
+      reply_markup: mainKb(),
+    });
+  }
+
+  // UA 添加模式
+  if (u.state === 'UA_ADD') {
+    const uaStr = (msg.text || msg.caption || '').trim();
+    if (!uaStr) {
+      return tg('sendMessage', env.BOT_TOKEN, {
+        chat_id: cid,
+        text: '\u274C \u8BF7\u53D1\u9001\u6709\u6548\u7684 User-Agent',
+      });
+    }
+    const cfg = await getUaConfig(uid, env);
+    if (!cfg.custom) cfg.custom = [];
+    cfg.custom.push(uaStr);
+    await saveUaConfig(uid, env, cfg);
+    u.state = null;
+    if (u.promptCid && u.promptMid) {
+      return showUaSettings(u.promptCid, u.promptMid, uid, env);
+    }
+    return tg('sendMessage', env.BOT_TOKEN, {
+      chat_id: cid,
+      text: '\u2705 \u5DF2\u6DFB\u52A0\u81EA\u5B9A\u4E49 UA: ' + escapeHTML(uaStr),
       reply_markup: mainKb(),
     });
   }
@@ -377,7 +566,7 @@ async function onMsg(msg, env) {
         await replyOrEdit(u, cid, env, {
           text: '\u{1F504} \u6B63\u5728\u62C9\u53D6\u8BA2\u9605...',
         });
-        const subResult = await fetchSub(urls[0]);
+        const subResult = await fetchSub(urls[0], uid, env);
         subText = subResult.text;
       } catch (e) {
         return replyOrEdit(u, cid, env, {
@@ -389,7 +578,7 @@ async function onMsg(msg, env) {
         text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 ' + urls.length + ' \u4E2A\u8BA2\u9605...',
       });
 
-      const results = await Promise.allSettled(urls.map(url => fetchSub(url)));
+      const results = await Promise.allSettled(urls.map(url => fetchSub(url, uid, env)));
 
       const texts = [];
       const errors = [];
@@ -421,16 +610,25 @@ async function onMsg(msg, env) {
     }
   }
 
+  // 检查是否包含 Gost Tunnel
+  const gostInfo = isGostSocksContent(subText);
+  let gostLines = [];
+
+  if (gostInfo) {
+    const split = splitGostLines(subText);
+    gostLines = split.gostLines;
+    subText = split.otherLines; // 去掉 Gost 行后重新赋值，供标准解析
+  }
+
   // 解析节点
   let proxies;
   try {
     proxies = ProxyUtils.parse(subText);
   } catch (e) {
     proxies = null;
-    // Sub-Store 可能因非标准格式抛出异常，不中断流程
   }
 
-  // 去重（基于节点特征而非节点名）
+  // 去重
   if (proxies && proxies.length > 0) {
     proxies = deduplicateProxies(proxies);
   }
@@ -442,51 +640,49 @@ async function onMsg(msg, env) {
   if (isRemote) {
     await clearAccState(uid, env);
   } else if (accState && accState.proxies && accState.proxies.length > 0) {
-    proxies = deduplicateProxies([...accState.proxies, ...proxies]);
+    proxies = deduplicateProxies([...accState.proxies, ...(proxies || [])]);
+  }
+
+  // 混合内容：标准节点 + Gost
+  const isMixed = gostLines.length > 0 && proxies && proxies.length > 0;
+
+  // 纯 Gost（无标准节点）
+  if (gostLines.length > 0 && (!proxies || proxies.length === 0)) {
+    u._lastSubInput = subText; // 已去掉 Gost 行，存标准部分
+    u._gostInput = gostLines.join('\n');
+    u._lastProxies = [];
+    u._isGost = true;
+    u._gostCount = gostLines.length;
+    return replyOrEdit(u, cid, env, {
+      text:
+        '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
+        '\u{1F4CA} \u8282\u70B9\u6570: <b>' + gostLines.length + '</b>\n' +
+        '\u{1F4CD} Gost Tunnel: ' + gostLines.length + '\n' +
+        '\u26A0\uFE0F \u4EC5 Shadowrocket / URI \u5217\u8868\u652F\u6301 Gost Tunnel\n\n' +
+        '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
+      parse_mode: 'HTML',
+      reply_markup: fmtKb(FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)), u._convTtl, u.ttl),
+    });
   }
 
   if (!proxies || proxies.length === 0) {
-    // 检查是否包含 Gost Tunnel (socks:// 带 gost 参数)
-    const gostInfo = isGostSocksContent(subText);
-    if (gostInfo) {
-      // Gost Tunnel 节点：保持原始格式保存，不转换
-      try {
-        const id = await saveToClip(subText, ttl, env);
-        const clipUrl = (env.CLIP_URL || '') + '/share/' + id;
-        const ttlT = ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttl < 3600 ? Math.round(ttl / 60) + '\u5206\u949F' : Math.round(ttl / 3600) + '\u5C0F\u65F6';
-        const preview = subText.length > 200 ? subText.slice(0, 200) + '...' : subText;
-        u._lastContent = subText;
-        u._lastSubInput = subText;
-        return replyOrEdit(u, cid, env, {
-          text:
-            '\u2705 <b>\u5DF2\u4FDD\u5B58</b>\n\n' +
-            '\u{1F310} ' + gostInfo.total + ' \u4E2A <b>Gost Tunnel</b> \u8282\u70B9\uFF0C\u4FDD\u6301\u539F\u59CB\u683C\u5F0F\n' +
-            '\u26A0\uFE0F \u8FD9\u4E9B\u8282\u70B9\u65E0\u6CD5\u8F6C\u6362\u4E3A\u5176\u4ED6\u4EE3\u7406\u683C\u5F0F\uFF0C\u539F\u6587\u4EF6\u76F4\u63A5\u5BFC\u5165 Shadowrocket \u7B49\u5BA2\u6237\u7AEF\u5373\u53EF\u4F7F\u7528\n\n' +
-            '\u{1F517} <code>' + clipUrl + '</code>\n\n' +
-            '\u{1F4CB} \u9884\u89C8:\n<code>' + escapeHTML(preview) + '</code>\n\n' +
-            '\u23F1 ' + ttlT,
-          parse_mode: 'HTML',
-          reply_markup: resultKb(clipUrl),
-        });
-      } catch (e) {
-        return replyOrEdit(u, cid, env, {
-          text: '\u274C \u4FDD\u5B58\u5931\u8D25: ' + e.message,
-        });
-      }
-    }
-
     // 纯文本：保存为短链
     try {
-      const id = await saveToClip(subText, ttl, env);
-      const clipUrl = (env.CLIP_URL || '') + '/share/' + id;
-      const preview = subText.length > 150 ? subText.slice(0, 150) + '...' : subText;
+      const preview = subText.length > 50 ? subText.slice(0, 50) + '...' : subText;
+      const { id, url: clipUrl } = await saveToClipAndTrack(subText, ttl, env, uid, {
+        preview: '\u{1F4C4} ' + preview,
+        nodeCount: 0,
+        source: 'text',
+      });
+      const previewShow = subText.length > 150 ? subText.slice(0, 150) + '...' : subText;
       const ttlT = ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttl < 3600 ? Math.round(ttl / 60) + '\u5206\u949F' : Math.round(ttl / 3600) + '\u5C0F\u65F6';
       u._lastContent = subText;
+      u._lastSubInput = subText;
       return replyOrEdit(u, cid, env, {
         text:
           '\u2705 <b>\u5DF2\u4FDD\u5B58</b>\n\n' +
           '\u{1F517} <code>' + clipUrl + '</code>\n\n' +
-          '\u{1F4CB} \u9884\u89C8:\n<code>' + escapeHTML(preview) + '</code>\n\n' +
+          '\u{1F4CB} \u9884\u89C8:\n<code>' + escapeHTML(previewShow) + '</code>\n\n' +
           '\u23F1 ' + ttlT,
         parse_mode: 'HTML',
         reply_markup: resultKb(clipUrl),
@@ -503,12 +699,27 @@ async function onMsg(msg, env) {
   for (const p of proxies) {
     types[p.type] = (types[p.type] || 0) + 1;
   }
-  const typeStr = Object.entries(types)
+  let typeStr = Object.entries(types)
     .map(([k, v]) => k + ': ' + v)
     .join(', ');
 
   u._lastSubInput = subText;
   u._lastProxies = proxies;
+
+  if (gostLines.length > 0) {
+    u._gostInput = gostLines.join('\n');
+    u._isGost = true;
+    u._gostCount = gostLines.length;
+    typeStr += '\nGost Tunnel: ' + gostLines.length + ' (\u9644\u52A0\u539F\u59CB\u683C\u5F0F)';
+  } else {
+    u._isGost = false;
+    u._gostInput = null;
+    u._gostCount = 0;
+  }
+
+  const gostHint = gostLines.length > 0
+    ? '\n\u26A0\uFE0F ' + gostLines.length + ' \u4E2A Gost Tunnel \u8282\u70B9\u5C06\u4EE5\u539F\u59CB\u683C\u5F0F\u9644\u52A0\u5728\u8F6C\u6362\u7ED3\u679C\u672B\u5C3E\uFF0C\u4EC5 Shadowrocket \u53EF\u7528\n'
+    : '';
 
   const accHint = accState && accState.proxies && accState.proxies.length > 0
     ? '\n\u{1F504} <b>\u7D2F\u8BA1\u6A21\u5F0F</b> \u2014 \u53D1\u9001\u66F4\u591A\u8BA2\u9605\u5185\u5BB9\u5C06\u81EA\u52A8\u5408\u5E76\uFF0C\u70B9\u51FB\u683C\u5F0F\u6309\u94AE\u5F00\u59CB\u8F6C\u6362\n'
@@ -522,10 +733,11 @@ async function onMsg(msg, env) {
         '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
         '\u{1F4CA} \u8282\u70B9\u6570: <b>' + proxies.length + '</b>\n' +
         '\u{1F4CD} ' + typeStr + '\n' +
+        gostHint +
         accHint +
         '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
       parse_mode: 'HTML',
-      reply_markup: fmtKb(),
+      reply_markup: fmtKb(null, u._convTtl, u.ttl),
     });
     await saveAccState(uid, env, { proxies, fmtMsg: accState.fmtMsg });
   } else {
@@ -534,17 +746,16 @@ async function onMsg(msg, env) {
         '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
         '\u{1F4CA} \u8282\u70B9\u6570: <b>' + proxies.length + '</b>\n' +
         '\u{1F4CD} ' + typeStr + '\n' +
+        gostHint +
         accHint +
         '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
       parse_mode: 'HTML',
-      reply_markup: fmtKb(),
+      reply_markup: fmtKb(null, u._convTtl, u.ttl),
     });
     const msgId = sent?.result?.message_id || (sent?.from_edit ? u.promptMid : null);
     await saveAccState(uid, env, {
       proxies,
-      fmtMsg: msgId
-        ? { cid: cid, id: msgId }
-        : null,
+      fmtMsg: msgId ? { cid: cid, id: msgId } : null,
     });
   }
 }
@@ -568,10 +779,7 @@ async function onCb(q, env) {
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
-      text:
-        '<b>\u{1F916} Sub-Store Bot</b>\n\n' +
-        '\u{1F310} \u8FDC\u7A0B\u8BA2\u9605: \u53D1\u9001\u8BA2\u9605\u94FE\u63A5\n' +
-        '\u{1F4CE} \u672C\u5730\u8BA2\u9605: \u53D1\u9001\u8282\u70B9/\u6587\u4EF6',
+      text: mainPageText(),
       parse_mode: 'HTML',
       reply_markup: mainKb(),
     });
@@ -603,13 +811,50 @@ async function onCb(q, env) {
     });
   }
 
-  if (d === 'fmt_menu') {
+  if (d === 'ua_menu') {
+    return showUaSettings(cid, mid, uid, env);
+  }
+
+  if (d.startsWith('ua_toggle:')) {
+    const idx = parseInt(d.split(':')[1]);
+    const cfg = await getUaConfig(uid, env);
+    const dis = cfg.disabled || [];
+    const pos = dis.indexOf(idx);
+    if (pos >= 0) {
+      dis.splice(pos, 1);
+    } else {
+      dis.push(idx);
+    }
+    cfg.disabled = dis;
+    await saveUaConfig(uid, env, cfg);
+    return showUaSettings(cid, mid, uid, env);
+  }
+
+  if (d.startsWith('ua_del:')) {
+    const ci = parseInt(d.split(':')[1]);
+    const cfg = await getUaConfig(uid, env);
+    if (ci >= 0 && ci < (cfg.custom || []).length) {
+      (cfg.custom || []).splice(ci, 1);
+      await saveUaConfig(uid, env, cfg);
+    }
+    return showUaSettings(cid, mid, uid, env);
+  }
+
+  if (d === 'ua_reset') {
+    await saveUaConfig(uid, env, { custom: [], disabled: [] });
+    return showUaSettings(cid, mid, uid, env);
+  }
+
+  if (d === 'ua_add') {
+    u.state = 'UA_ADD';
+    u.promptCid = cid;
+    u.promptMid = mid;
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
-      text: '\u{1F504} \u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
+      text: '\u{1F310} \u8BF7\u53D1\u9001\u81EA\u5B9A\u4E49 User-Agent \u5B57\u7B26\u4E32\n\n\u8F93\u5165\u540E\u6211\u5C06\u628A\u5B83\u52A0\u5230 UA \u8F6E\u8BE2\u6C60\u4E2D\u3002',
       parse_mode: 'HTML',
-      reply_markup: fmtKb(),
+      reply_markup: { inline_keyboard: [[{ text: '\u2190 \u53D6\u6D88', callback_data: 'ua_menu' }]] },
     });
   }
 
@@ -634,75 +879,298 @@ async function onCb(q, env) {
     });
   }
 
-  if (d === 'conv_again') {
-    // 再次转换：用缓存内容重新解析，回到格式选择
-    if (!u._lastSubInput) {
+  // ====== 我的短链 ======
+
+  if (d.startsWith('my_links_')) {
+    const page = parseInt(d.split('_')[2]) || 0;
+    const links = await getUserLinks(uid, env);
+    if (links.length === 0) {
       return tg('editMessageText', env.BOT_TOKEN, {
         chat_id: cid,
         message_id: mid,
-        text: '\u274C \u6CA1\u6709\u4E0A\u6B21\u7684\u8BA2\u9605\u7F13\u5B58\uFF0C\u8BF7\u91CD\u65B0\u53D1\u9001',
+        text: '\u{1F4CB} <b>\u6211\u7684\u77ED\u94FE</b>\n\n\u{1F4A4} \u8FD8\u6CA1\u6709\u77ED\u94FE\n\u8F6C\u6362\u8BA2\u9605\u6216\u4FDD\u5B58\u6587\u672C\u540E\uFF0C\u77ED\u94FE\u4F1A\u81EA\u52A8\u8BB0\u5F55\u5728\u8FD9\u91CC\u3002',
         parse_mode: 'HTML',
-        reply_markup: mainKb(),
+        reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }]] },
       });
     }
-
-    // 重新解析
-    let proxies;
-    try {
-      proxies = ProxyUtils.parse(u._lastSubInput);
-    } catch (e) {
-      proxies = null;
+    const pageSize = 5;
+    const totalPages = Math.ceil(links.length / pageSize);
+    const start = page * pageSize;
+    const pageLinks = links.slice(start, start + pageSize);
+    const rows = [];
+    for (const l of pageLinks) {
+      const icon = linkStatusIcon(l);
+      rows.push([{ text: icon + ' ' + escapeHTML(l.preview), callback_data: 'link_' + l.id }]);
     }
-
-    if (proxies && proxies.length > 0) {
-      proxies = deduplicateProxies(proxies);
-    } else {
-      // 检查是否为 Gost Tunnel 内容（不可转换）
-      const gostInfo = isGostSocksContent(u._lastSubInput);
-      if (gostInfo) {
-        return tg('editMessageText', env.BOT_TOKEN, {
-          chat_id: cid,
-          message_id: mid,
-          text:
-            '\u26A0\uFE0F <b>Gost Tunnel</b> \u8282\u70B9\u65E0\u6CD5\u8F6C\u6362\u4E3A\u5176\u4ED6\u683C\u5F0F\n\n' +
-            '\u{1F310} \u68C0\u6D4B\u5230 ' + gostInfo.total + ' \u4E2A Gost Tunnel \u8282\u70B9\uFF08' +
-            (gostInfo.gostCount === gostInfo.total ? '\u5168\u90E8' : gostInfo.gostCount + '/' + gostInfo.total) + '\u5E26 gost \u53C2\u6570\uFF09\n\n' +
-            '\u539F\u59CB\u6587\u4EF6\u5DF2\u4FDD\u5B58\u4E3A\u77ED\u94FE\uFF0C\u76F4\u63A5\u5BFC\u5165 Shadowrocket \u7B49\u5BA2\u6237\u7AEF\u5373\u53EF\u4F7F\u7528',
-          parse_mode: 'HTML',
-          reply_markup: mainKb(),
-        });
-      }
-      proxies = [];
-    }
-
-    await clearAccState(uid, env);
-
-    if (!proxies || proxies.length === 0) {
-      return tg('editMessageText', env.BOT_TOKEN, {
-        chat_id: cid,
-        message_id: mid,
-        text: '\u274C \u89E3\u6790\u5931\u8D25',
-        parse_mode: 'HTML',
-        reply_markup: mainKb(),
-      });
-    }
-
-    u._lastProxies = proxies;
+    const navRow = [];
+    if (page > 0) navRow.push({ text: '\u25C0 \u4E0A\u4E00\u9875', callback_data: 'my_links_' + (page - 1) });
+    if (page < totalPages - 1) navRow.push({ text: '\u4E0B\u4E00\u9875 \u25B6', callback_data: 'my_links_' + (page + 1) });
+    if (navRow.length) rows.push(navRow);
+    rows.push([{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }]);
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
-      text:
-        '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
-        '\u{1F4CA} \u8282\u70B9\u6570: <b>' + proxies.length + '</b>\n\n' +
-        '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
+      text: '\u{1F4CB} <b>\u6211\u7684\u77ED\u94FE</b>  <i>' + links.length + '\u6761</i>\n\n\u70B9\u51FB\u67E5\u770B\u8BE6\u60C5:',
       parse_mode: 'HTML',
-      reply_markup: fmtKb(),
+      reply_markup: { inline_keyboard: rows },
     });
   }
+
+  // ====== 短\u94FE\u8BE6\u60C5 ======
+
+  if (d.startsWith('link_')) {
+    const linkId = d.replace('link_', '');
+    const links = await getUserLinks(uid, env);
+    const l = links.find(x => x.id === linkId);
+    if (!l) {
+      return tg('editMessageText', env.BOT_TOKEN, {
+        chat_id: cid,
+        message_id: mid,
+        text: '\u274C \u77ED\u94FE\u5DF2\u4E0D\u5B58\u5728',
+        parse_mode: 'HTML',
+        reply_markup: mainKb(),
+      });
+    }
+    const clipUrl = (env.CLIP_URL || '') + '/share/' + l.id;
+    const statusIcon = linkStatusIcon(l);
+    let statusText;
+    if (l.ttl === 0) statusText = '\u{1F535} \u6C38\u4E45\u6709\u6548';
+    else if (l.expiresAt && Date.now() > l.expiresAt) statusText = '\u26AB \u5DF2\u8FC7\u671F';
+    else {
+      const remain = Math.round((l.expiresAt - Date.now()) / 1000);
+      statusText = '\u{1F7E0} \u5269 ' + (remain < 3600 ? Math.round(remain / 60) + '\u5206\u949F' : Math.round(remain / 3600) + '\u5C0F\u65F6');
+    }
+    let text = '\u{1F4CB} <b>\u77ED\u94FE\u8BE6\u60C5</b>\n\n';
+    text += statusIcon + ' <b>' + escapeHTML(l.preview) + '</b>\n';
+    text += '\u{1F4CA} ' + (l.nodeCount || 0) + ' \u8282\u70B9  \u00B7 ' + statusText + '\n\n';
+    text += '\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
+    
+    const isExpired = l.ttl > 0 && l.expiresAt && Date.now() > l.expiresAt;
+    const ttlRow = isExpired
+      ? [{ text: '\u26AB \u5DF2\u8FC7\u671F\uFF0C\u65E0\u6CD5\u4FEE\u6539', callback_data: 'noop' }]
+      : [{ text: '\u23F1 \u4FEE\u6539\u6642\u6548', callback_data: 'mod_ttl_' + l.id }];
+
+    const rows = [
+      [
+        { text: '\u{1F4CB} \u590D\u5236\u94FE\u63A5', copy_text: { text: clipUrl } },
+        { text: '\u{1F517} \u6253\u5F00', url: clipUrl },
+      ],
+      ttlRow,
+      [
+        { text: '\u{1F5D1} \u5220\u9664\u77ED\u94FE', callback_data: 'del_confirm_' + l.id },
+      ],
+      [
+        { text: '\u2190 \u8FD4\u56DE\u5217\u8868', callback_data: 'my_links_0' },
+      ],
+    ];
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: text,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: rows },
+    });
+  }
+
+  // ====== 删\u9664\u786E\u8BA4 ======
+
+  if (d.startsWith('del_confirm_')) {
+    const linkId = d.replace('del_confirm_', '');
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: '\u{2757} \u786E\u5B9A\u5220\u9664\u8FD9\u6761\u77ED\u94FE\uFF1F\n\n\u5220\u9664\u540E\u94FE\u63A5\u5C06\u5B8C\u5168\u5931\u6548\uFF0C\u65E0\u6CD5\u6062\u590D\u3002',
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '\u2705 \u786E\u5B9A\u5220\u9664', callback_data: 'do_del_' + linkId }],
+          [{ text: '\u2190 \u53D6\u6D88', callback_data: 'link_' + linkId }],
+        ],
+      },
+    });
+  }
+
+  // ====== 执\u884C\u5220\u9664 ======
+
+  if (d.startsWith('do_del_')) {
+    const linkId = d.replace('do_del_', '');
+    try { await env.KV.delete('share_' + linkId); } catch (e) { /* ignore */ }
+    const ok = await removeUserLink(uid, env, linkId);
+    const links = await getUserLinks(uid, env);
+    if (links.length === 0) {
+      return tg('editMessageText', env.BOT_TOKEN, {
+        chat_id: cid,
+        message_id: mid,
+        text: '\u{1F4CB} <b>\u6211\u7684\u77ED\u94FE</b>\n\n\u{1F4A4} \u8FD8\u6CA1\u6709\u77ED\u94FE',
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }]] },
+      });
+    }
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: '\u{1F4CB} <b>\u6211\u7684\u77ED\u94FE</b>  <i>' + links.length + '\u6761</i>\n\n\u70B9\u51FB\u67E5\u770B\u8BE6\u60C5:',
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: linkStatusIcon(links[0]) + ' ' + escapeHTML(links[0].preview), callback_data: 'link_' + links[0].id }],
+          [{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }],
+        ],
+      },
+    });
+  }
+
+  // ====== 修改短链时效 ======
+
+  if (d.startsWith('mod_ttl_')) {
+    const linkId = d.replace('mod_ttl_', '');
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: '\u23F1 <b>\u4FEE\u6539\u77ED\u94FE\u6642\u6548</b>\n\n\u9009\u62E9\u65B0\u7684\u6642\u6548\uFF0C\u5DF2\u8FC7\u671F\u7684\u77ED\u94FE\u65E0\u6CD5\u6062\u590D\u3002',
+      parse_mode: 'HTML',
+      reply_markup: ttlKb('chg_ttl_' + linkId + ':'),
+    });
+  }
+
+  if (d.startsWith('chg_ttl_')) {
+    const rest = d.replace('chg_ttl_', '');
+    const colonIdx = rest.lastIndexOf(':');
+    const linkId = rest.slice(0, colonIdx);
+    const newTtl = parseInt(rest.slice(colonIdx + 1));
+    try {
+      const data = await env.KV.get('share_' + linkId, 'json');
+      if (data && data.text) {
+        const kvOpts = newTtl > 0 ? { expirationTtl: newTtl } : {};
+        await env.KV.put('share_' + linkId, JSON.stringify({ text: data.text }), kvOpts);
+      } else {
+        return tg('editMessageText', env.BOT_TOKEN, {
+          chat_id: cid,
+          message_id: mid,
+          text: '\u274C \u77ED\u94FE\u5DF2\u8FC7\u671F\uFF0C\u65E0\u6CD5\u4FEE\u6539\n\n\u5DF2\u8FC7\u671F\u7684\u77ED\u94FE\u65E0\u6CD5\u6062\u590D\uFF0C\u8BF7\u8FD4\u56DE\u5217\u8868\u5220\u9664\u3002',
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u5217\u8868', callback_data: 'my_links_0' }]] },
+        });
+      }
+    } catch (e) { /* ignore */ }
+    const links = await getUserLinks(uid, env);
+    const idx = links.findIndex(x => x.id === linkId);
+    if (idx >= 0) {
+      links[idx].ttl = newTtl;
+      links[idx].expiresAt = newTtl > 0 ? Date.now() + newTtl * 1000 : null;
+      await env.KV.put('user_links:' + uid, JSON.stringify(links));
+    }
+    const l = links.find(x => x.id === linkId);
+    if (l) {
+      const clipUrl = (env.CLIP_URL || '') + '/share/' + l.id;
+      const statusText = l.ttl === 0 ? '\u{1F535} \u6C38\u4E45\u6709\u6548'
+        : l.expiresAt && Date.now() > l.expiresAt ? '\u26AB \u5DF2\u8FC7\u671F'
+        : '\u{1F7E0} \u5269 ' + Math.round((l.expiresAt - Date.now()) / 60000) + '\u5206\u949F';
+      let text = '\u{1F4CB} <b>\u77ED\u94FE\u8BE6\u60C5</b>\n\n';
+      text += linkStatusIcon(l) + ' <b>' + escapeHTML(l.preview) + '</b>\n';
+      text += '\u{1F4CA} ' + (l.nodeCount || 0) + ' \u8282\u70B9  \u00B7 ' + statusText + '\n\n';
+      text += '\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
+      return tg('editMessageText', env.BOT_TOKEN, {
+        chat_id: cid,
+        message_id: mid,
+        text: text,
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '\u{1F4CB} \u590D\u5236\u94FE\u63A5', copy_text: { text: clipUrl } },
+             { text: '\u{1F517} \u6253\u5F00', url: clipUrl }],
+            [{ text: '\u23F1 \u4FEE\u6539\u6642\u6548', callback_data: 'mod_ttl_' + l.id }],
+            [{ text: '\u{1F5D1} \u5220\u9664\u77ED\u94FE', callback_data: 'del_confirm_' + l.id }],
+            [{ text: '\u2190 \u8FD4\u56DE\u5217\u8868', callback_data: 'my_links_0' }],
+          ],
+        },
+      });
+    }
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: '\u2705 \u5DF2\u4FEE\u6539',
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u5217\u8868', callback_data: 'my_links_0' }]] },
+    });
+  }
+
+  // ====== 格式选择页面的时效设置 ======
+
+  if (d === 'conv_ttl_menu') {
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: '\u23F1 <b>\u8BBE\u7F6E\u5F53\u524D\u8F6C\u6362\u7684\u6642\u6548</b>\n\n\u4EC5\u5F71\u54CD\u672C\u6B21\u8F6C\u6362\uFF0C\u4E0D\u4F1A\u6539\u53D8\u4E3B\u9875\u7684\u9ED8\u8BA4\u6642\u6548\u3002',
+      parse_mode: 'HTML',
+      reply_markup: ttlKb('conv_'),
+    });
+  }
+
+  if (d.startsWith('conv_ttl_set:')) {
+    const ttlVal = parseInt(d.split(':')[1]);
+    u._convTtl = ttlVal;
+    const isGost = u._isGost && (!u._lastProxies || u._lastProxies.length === 0);
+    const formats = isGost ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: '\u2705 \u5DF2\u8BBE\u7F6E\u5F53\u524D\u6642\u6548: ' + (ttlVal === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttlVal < 3600 ? Math.round(ttlVal / 60) + '\u5206\u949F' : Math.round(ttlVal / 3600) + '\u5C0F\u65F6'),
+      parse_mode: 'HTML',
+      reply_markup: fmtKb(formats, u._convTtl, u.ttl),
+    });
+  }
+
+  // ====== 格式转换 ======
 
   if (d.startsWith('conv_fmt:')) {
     const fmt = d.split(':')[1];
     const fmtLabel = FORMAT_OPTIONS.find((f) => f.id === fmt)?.label || fmt;
+
+    // 纯 Gost（无标准节点）：直接输出原始内容
+    if (u._isGost && (!u._lastProxies || u._lastProxies.length === 0)) {
+      if (!GOST_FORMATS.includes(fmt)) {
+        return tg('editMessageText', env.BOT_TOKEN, {
+          chat_id: cid,
+          message_id: mid,
+          text: '\u274C Gost Tunnel \u4E0D\u652F\u6301\u8BE5\u683C\u5F0F',
+          parse_mode: 'HTML',
+          reply_markup: fmtKb(FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)), u._convTtl, u.ttl),
+        });
+      }
+      const rawText = u._gostInput || u._lastSubInput || '';
+      try {
+        const { id, url: clipUrl } = await saveToClipAndTrack(rawText, getEffectiveTtl(u), env, uid, {
+          preview: fmtLabel + ' \u00B7 ' + (u._gostCount || '?') + ' \u8282\u70B9 (Gost)',
+          nodeCount: u._gostCount || 0,
+          source: 'gost',
+        });
+        u._lastContent = rawText;
+        const effTtl = getEffectiveTtl(u);
+        u._convTtl = null;
+        const ttlT = effTtl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : effTtl < 3600 ? Math.round(effTtl / 60) + '\u5206\u949F' : Math.round(effTtl / 3600) + '\u5C0F\u65F6';
+        await tg('editMessageText', env.BOT_TOKEN, {
+          chat_id: cid,
+          message_id: mid,
+          text:
+            '\u2705 <b>\u8F6C\u6362\u5B8C\u6210</b>\n' +
+            '\u{1F4CA} ' + (u._gostCount || '?') + ' Gost \u8282\u70B9 \u2192 <b>' + fmtLabel + '</b>\n\n' +
+            '\u{1F517} <code>' + clipUrl + '</code>\n\n' +
+            '\u23F1 ' + ttlT,
+          parse_mode: 'HTML',
+          reply_markup: resultKb(clipUrl),
+        });
+        return;
+      } catch (e) {
+        return tg('editMessageText', env.BOT_TOKEN, {
+          chat_id: cid,
+          message_id: mid,
+          text: '\u274C \u4FDD\u5B58\u5931\u8D25: ' + e.message,
+          parse_mode: 'HTML',
+          reply_markup: mainKb(),
+        });
+      }
+    }
 
     if (!u._lastProxies || u._lastProxies.length === 0) {
       return tg('editMessageText', env.BOT_TOKEN, {
@@ -723,7 +1191,7 @@ async function onCb(q, env) {
         message_id: mid,
         text: '\u274C \u8F6C\u6362\u5931\u8D25: ' + e.message,
         parse_mode: 'HTML',
-        reply_markup: fmtKb(),
+        reply_markup: fmtKb(null, u._convTtl, u.ttl),
       });
     }
 
@@ -733,8 +1201,14 @@ async function onCb(q, env) {
         message_id: mid,
         text: '\u274C \u8F6C\u6362\u7ED3\u679C\u4E3A\u7A7A',
         parse_mode: 'HTML',
-        reply_markup: fmtKb(),
+        reply_markup: fmtKb(null, u._convTtl, u.ttl),
       });
+    }
+
+    // 混合内容：追加 Gost 行到转换结果末尾
+    if (u._isGost && u._gostInput && u._lastProxies?.length) {
+      const sep = fmt === 'uri' ? '\n' : '\n\n# Gost Tunnel \u8282\u70B9\uFF08\u4EC5 Shadowrocket \u53EF\u7528\uFF09\n';
+      output = String(output).trimEnd() + sep + u._gostInput;
     }
 
     await tg('editMessageText', env.BOT_TOKEN, {
@@ -745,12 +1219,15 @@ async function onCb(q, env) {
     });
 
     try {
-      const id = await saveToClip(String(output), u.ttl || 300, env);
+      const { id, url: clipUrl } = await saveToClipAndTrack(String(output), getEffectiveTtl(u), env, uid, {
+        preview: fmtLabel + ' \u00B7 ' + u._lastProxies.length + ' \u8282\u70B9',
+        nodeCount: u._lastProxies.length,
+        source: 'convert',
+      });
       u._lastContent = String(output);
-      const clipUrl = (env.CLIP_URL || '') + '/share/' + id;
-
-      const ttlT = (u.ttl === 0) ? '\u6C38\u4E0D\u8FC7\u671F' : (u.ttl || 300) < 3600 ? Math.round((u.ttl || 300) / 60) + '\u5206\u949F' : Math.round((u.ttl || 300) / 3600) + '\u5C0F\u65F6';
-
+      const effTtl2 = getEffectiveTtl(u);
+      u._convTtl = null;
+      const ttlT = effTtl2 === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : effTtl2 < 3600 ? Math.round(effTtl2 / 60) + '\u5206\u949F' : Math.round(effTtl2 / 3600) + '\u5C0F\u65F6';
       await tg('editMessageText', env.BOT_TOKEN, {
         chat_id: cid,
         message_id: mid,
@@ -775,26 +1252,7 @@ async function onCb(q, env) {
     return;
   }
 
-  if (d === 'help') {
-    return tg('editMessageText', env.BOT_TOKEN, {
-      chat_id: cid,
-      message_id: mid,
-      text:
-        '\u{1F4CB} <b>\u5173\u4E8E</b>\n\n' +
-        '\u{1F310} \u8FDC\u7A0B\u8BA2\u9605: \u53D1\u94FE\u63A5\uFF0C\u81EA\u52A8\u62C9\u53D6\u8F6C\u6362\n' +
-        '\u{1F4CE} \u672C\u5730\u8BA2\u9605: \u53D1\u8282\u70B9/\u6587\u4EF6\uFF0C\u81EA\u52A8\u89E3\u6790\u8F6C\u6362\n' +
-        '\u2705 \u666E\u901A\u6587\u672C: \u81EA\u52A8\u4FDD\u5B58\u4E3A\u77ED\u94FE\n\n' +
-        '\u{1F4E6} \u8F93\u51FA\u683C\u5F0F (12\u79CD):\n' +
-        'Clash Meta / QX / Surge / Shadowrocket\n' +
-        'sing-box / V2Ray / Loon / Stash\n' +
-        'Surfboard / Egern / URI / JSON',
-      parse_mode: 'HTML',
-      reply_markup: mainKb(),
-    });
-  }
-}
-
-// ==================== Worker 入口 ====================
+  // ==================== Worker 入口 ====================
 
 export default {
   async fetch(request, env, ctx) {
@@ -808,8 +1266,7 @@ export default {
     if (path === '/save' && request.method === 'POST') {
       try {
         const body = await request.text();
-        const id = genId();
-        await env.KV.put('share_' + id, JSON.stringify({ text: body }), { expirationTtl: 86400 });
+        const id = await saveToClip(body, 86400, env);
         const clipUrl = (env.CLIP_URL || '') + '/share/' + id;
         return new Response(JSON.stringify({ success: true, id, url: clipUrl }), { headers: { 'Content-Type': 'application/json', ...cors } });
       } catch (e) {
@@ -830,7 +1287,6 @@ export default {
       const body = await request.json();
       if (!body) return new Response('ok');
 
-      // 验证 webhook secret
       if (env.WEBHOOK_SECRET && env.WEBHOOK_SECRET !== url.searchParams.get('secret')) {
         return new Response('unauthorized', { status: 401 });
       }

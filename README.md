@@ -1,57 +1,80 @@
 # Sub-Store Bot ☁️
 
-Telegram Bot，远程 / 本地订阅一键转换，输出 **12 种客户端格式**。
+Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Linsars/sub-store-bot)
 
 ---
 
-## 能干吗
+## 功能
 
-- **远程订阅** — 发订阅链接，自动拉取，选格式出短链
-- **本地订阅** — 发节点文本或文件，同个对话自动累计合并 + 去重
-- **多订阅合并** — 一次性发多条 URL 或文件，自动合并去重
-- **12 种输出格式** — Clash Meta / Mihomo、Quantumult X、Surge、Shadowrocket、sing-box、V2Ray、Loon、Stash、Surfboard、Egern、URI 列表、JSON
-- **PV 级转换** — 820KB Sub-Store 引擎内置，精度同 [Sub-Store](https://github.com/sub-store-org/Sub-Store)
-- **短链分享** — 转换结果保存到 KV，可复制/分享/下载
+- **远程订阅** — 发链接，自动 UA 轮询拉取，选格式出短链
+- **本地订阅** — 发节点文本或文件，同对话自动累计合并 + 去重
+- **多订阅合并** — 一次发多条 URL 或文件，自动合并去重
+- **12 种输出格式** — Clash Meta、Quantumult X、Surge、Shadowrocket、sing-box、V2Ray、Loon、Stash、Surfboard、Egern、URI 列表、JSON
+- **Gost Tunnel 支持** — `socks://` Gost 节点保持原始格式，仅限 Shadowrocket/URI
+- **PV 级转换** — 870KB Sub-Store 引擎内置，精度同 [Sub-Store](https://github.com/sub-store-org/Sub-Store)
+- **短链管理** — 查看、删除、修改时效（永久 ↔ 限时互转）
+- **单次转换时效** — 每次转换可单独设置短链有效期，不影响默认
+- **UA 轮询可配置** — 主页管理轮询 UA 池：启用/禁用默认 UA、添加自定义 UA、恢复默认
+- **自动去重** — 基于节点特征而非名称，合并来源不重复
 
-## 部署
+## 按钮说明
 
-点这个黄色按钮，授权 GitHub + Cloudflare，填 `BOT_TOKEN` 和 `ALLOWED_USERS` 就行：
+| 按钮 | 功能 |
+|------|------|
+| 🌐 远程订阅 | 输入订阅 URL，自动拉取 |
+| 📎 本地订阅 | 发送节点文本/文件 |
+| 🌐 UA 轮询 | 配置订阅拉取用的 User-Agent 池 |
+| ⏱ 有效期 | 设置默认短链时效 |
+| 📋 我的短链 | 管理已生成的短链 |
+
+## 一键部署
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Linsars/sub-store-bot)
 
 部署完成后：
 
-1. 去 Cloudflare Dashboard → Workers → `sub-store-bot` 设置 `CLIP_URL` 为你的 Worker 域名（如 `https://xxx.workers.dev`）
-2. 访问 `https://你的worker域名/webhook` 激活 Webhook
-3. 在 Telegram 里发 `/start`
+1. 去 Cloudflare Dashboard → Workers → `sub-store-bot`，添加环境变量：
+   - `BOT_TOKEN` — Telegram Bot Token（必填）
+   - `CLIP_URL` — 你的 Worker 域名，如 `https://xxx.workers.dev`（必填，短链基础 URL）
+   - `ALLOWED_USERS` — 允许使用的用户 ID，逗号分隔（可选，不设则全部开放）
+2. 绑定 KV Namespace（绑定名 `KV`）
+3. 访问 `https://你的worker域名/setup` 激活 Webhook（或用 `/webhook` 手动注册）
+4. Telegram 里发 `/start`
 
-> ⚠️ **按钮需要 `wrangler.toml` 的 `kv_namespaces` 里不要写 `id` 字段**（包括 `id = ""`），否则按钮页面报"无法获取存储库内容"。
+> ⚠️ **一键按钮注意**：`wrangler.toml` 的 `kv_namespaces` 里不要写 `id` 字段（已配置好），否则按钮页面报错。
 
-## 自动部署更新
+## GitHub Actions 自动部署
 
-设好以下 Secret 后，每次推代码到 `main` 自动更新 CF Worker：
+设好以下 Secrets，每次推 `main` 自动更新：
 
-| Secret | 哪里拿 |
-|--------|--------|
-| `CF_API_TOKEN` | Cloudflare Dashboard → 我的 API 令牌 → 创建令牌（Workers 编辑权限） |
-| `CF_ACCOUNT_ID` | Cloudflare Dashboard → 右侧边栏 → 账户 ID |
-| `BOT_TOKEN` | [@BotFather](https://t.me/BotFather) |
-| `ALLOWED_USERS` | [@userinfobot](https://t.me/userinfobot) — 多个用逗号分隔 |
-| `CLIP_URL` | 你的 Worker 域名。没设不影响，只是短链显示 ID 而非完整链接 |
-
-> 没设的人 fork 了也能正常用一键按钮部署，自动跳过。
+| Secret | 说明 |
+|--------|------|
+| `CF_API_TOKEN` | Cloudflare API Token（Worker 编辑权限） |
+| `CF_ACCOUNT_ID` | Cloudflare 账户 ID |
+| `BOT_TOKEN` | Telegram Bot Token |
+| `CLIP_URL` | 短链域名，如 `https://xxx.workers.dev` |
+| `ALLOWED_USERS` | 可选，用户 ID 逗号分隔 |
 
 ## 环境变量
 
 | 变量 | 说明 | 必填 |
 |------|------|------|
 | `BOT_TOKEN` | Telegram Bot Token | ✅ |
-| `ALLOWED_USERS` | 允许使用的用户 ID（逗号分隔），不设则全部开放 | ❌ |
-| `CLIP_URL` | 短链基础 URL，如 `https://xxx.workers.dev` | ❌ |
-| `CLOUDFLARE_API_TOKEN` | 部署用，CF Workers 编辑权限 | 仅部署 |
-| `CF_ACCOUNT_ID` | 部署用 | 仅部署 |
+| `CLIP_URL` | 短链基础 URL（如 `https://xxx.workers.dev`） | ✅ |
+| `ALLOWED_USERS` | 允许的用户 ID（逗号分隔），不设则全部开放 | ❌ |
+| `KV` | KV Namespace 绑定名 | ✅ |
+
+## 手动部署
+
+```bash
+export CLOUDFLARE_API_TOKEN="your_token"
+export BOT_TOKEN="your_bot_token"
+export CLIP_URL="https://your-worker.workers.dev"
+export KV_NAMESPACE_ID="your_kv_ns_id"
+python3 deploy.py
+```
 
 ## License
 
