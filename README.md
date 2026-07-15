@@ -10,9 +10,10 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 
 - **远程订阅** — 发链接，自动 UA 轮询拉取，选格式出短链
 - **本地订阅** — 发节点文本或文件，同对话自动累计合并 + 去重
-- **多订阅合并** — 一次发多条 URL 或文件，自动合并去重
-- **12 种输出格式** — Clash Meta、Quantumult X、Surge、Shadowrocket、sing-box、V2Ray、Loon、Stash、Surfboard、Egern、URI 列表、JSON
-- **Gost Tunnel 支持** — `socks://` Gost 节点保持原始格式，仅限 Shadowrocket/URI
+- **多订阅合并** — 一次发多条 URL 或文件（内存累计，同实例内有效），自动合并去重
+- **12 种输出格式** — Clash Meta、URI 标准链、JSON、V2Ray、sing-box、Surfboard、Quantumult X、Shadowrocket、Surge、Loon、Stash、Egern
+- **WireGuard 双链输出** — WG 节点自动以 Clash Meta YAML 单独输出（字段最全），侧链按钮
+- **Gost Tunnel 双链输出** — `socks://` Gost 节点保留原始格式单独输出，侧链按钮
 - **PV 级转换** — 870KB Sub-Store 引擎内置，精度同 [Sub-Store](https://github.com/sub-store-org/Sub-Store)
 - **短链管理** — 查看、删除、修改时效（永久 ↔ 限时互转）
 - **单次转换时效** — 每次转换可单独设置短链有效期，不影响默认
@@ -28,6 +29,14 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 | 🌐 UA 轮询 | 配置订阅拉取用的 User-Agent 池 |
 | ⏱ 有效期 | 设置默认短链时效 |
 | 📋 我的短链 | 管理已生成的短链 |
+
+**结果键盘布局：**
+```
+主链 | 分享          ← 主输出格式
+⚡ WireGuard | 分享  ← 仅当有 WG 节点时（Clash Meta）
+🔄 Gost | 分享       ← 仅当有 Gost 隧道时（原始格式）
+主页
+```
 
 ## 一键部署
 
