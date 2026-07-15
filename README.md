@@ -30,15 +30,7 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 | ⏱ 有效期 | 设置默认短链时效 |
 | 📋 我的短链 | 管理已生成的短链 |
 
-**结果键盘布局：**
-```
-主链 | 分享          ← 主输出格式
-⚡ WireGuard | 分享  ← 仅当有 WG 节点时（Clash Meta）
-🔄 Gost | 分享       ← 仅当有 Gost 隧道时（原始格式）
-主页
-```
-
-## 一键部署
+ ## 一键部署
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Linsars/sub-store-bot)
 
