@@ -56,17 +56,17 @@ function mainKb() {
 
 const FORMAT_OPTIONS = [
   { id: 'clashmeta', label: 'Clash Meta' },
-  { id: 'qx', label: 'Quantumult X' },
-  { id: 'surge', label: 'Surge' },
-  { id: 'shadowrocket', label: 'Shadowrocket' },
-  { id: 'singbox', label: 'sing-box' },
+  { id: 'uri', label: 'URI 标准链' },
+  { id: 'json', label: 'JSON' },
   { id: 'v2ray', label: 'V2Ray' },
+  { id: 'singbox', label: 'sing-box' },
+  { id: 'surfboard', label: 'Surfboard' },
+  { id: 'qx', label: 'Quantumult X' },
+  { id: 'shadowrocket', label: 'Shadowrocket' },
+  { id: 'surge', label: 'Surge' },
   { id: 'loon', label: 'Loon' },
   { id: 'stash', label: 'Stash' },
-  { id: 'surfboard', label: 'Surfboard' },
   { id: 'egern', label: 'Egern' },
-  { id: 'uri', label: 'URI 列表' },
-  { id: 'json', label: 'JSON' },
 ];
 
 // Gost Tunnel 仅支持的格式
@@ -125,10 +125,7 @@ function resultKb(url) {
   return {
     inline_keyboard: [
       [
-        { text: '\u{1F4E5} \u4E0B\u8F7D\u7ED3\u679C', callback_data: 'dl_result' },
-        { text: '\u{1F517} \u6253\u5F00', url: url },
-      ],
-      [
+        { text: '\u{1F517} \u4E3B\u94FE', url: url },
         { text: '\u{1F4E4} \u5206\u4EAB', url: 'https://t.me/share/url?url=' + encodeURIComponent(url) },
       ],
       [
@@ -136,6 +133,25 @@ function resultKb(url) {
       ],
     ],
   };
+}
+
+function multiResultKb(mainUrl, extraUrls) {
+  const kb = [
+    [
+      { text: '\u{1F517} \u4E3B\u94FE', url: mainUrl },
+      { text: '\u{1F4E4} \u5206\u4EAB', url: 'https://t.me/share/url?url=' + encodeURIComponent(mainUrl) },
+    ],
+  ];
+  for (const ext of (extraUrls || [])) {
+    kb.push([
+      ext,
+      { text: '\u{1F4E4} \u5206\u4EAB', url: 'https://t.me/share/url?url=' + encodeURIComponent(ext.url) },
+    ]);
+  }
+  kb.push([
+    { text: '\u{1F3E0} \u4E3B\u9875', callback_data: 'menu' },
+  ]);
+  return { inline_keyboard: kb };
 }
 
 // ==================== 主页文字 ====================
@@ -352,21 +368,6 @@ function deduplicateProxies(proxies) {
 
 // ==================== KV 累计状态（跨实例共享） ====================
 
-async function getAccState(uid, env) {
-  try {
-    const raw = await env.KV.get('acc:' + uid, { type: 'json' });
-    return raw || null;
-  } catch { return null; }
-}
-
-async function saveAccState(uid, env, data) {
-  await env.KV.put('acc:' + uid, JSON.stringify(data), { expirationTtl: 300 });
-}
-
-async function clearAccState(uid, env) {
-  await env.KV.delete('acc:' + uid);
-}
-
 // ==================== 编辑提示消息或发新消息 ====================
 
 async function replyOrEdit(u, cid, env, opts) {
@@ -489,7 +490,6 @@ async function onMsg(msg, env) {
 
   // /start
   if (msg.text && msg.text.trim() === '/start') {
-    await clearAccState(uid, env);
     return tg('sendMessage', env.BOT_TOKEN, {
       chat_id: cid,
       text: mainPageText(),
@@ -837,15 +837,45 @@ async function onMsg(msg, env) {
   }
   }
 
-  // 本地订阅内存累计（多文件追加，同实例内有效）
-  if (!isRemote && u._accProxies && u._accProxies.length > 0) {
-    proxies = deduplicateProxies([...u._accProxies, ...(proxies || [])]);
+  // 分离当前文件节点类型
+  const currentWg = proxies ? proxies.filter(p => p.type === 'wireguard') : [];
+  const currentStd = proxies ? proxies.filter(p => p.type !== 'wireguard') : [];
+
+  // 与内存累计合并（同实例内多文件追加）
+  if (!isRemote) {
+    if (u._accProxies && u._accProxies.length > 0) {
+      currentStd.unshift(...u._accProxies);
+    }
+    if (u._accWgProxies && u._accWgProxies.length > 0) {
+      currentWg.unshift(...u._accWgProxies);
+    }
+  }
+
+  // dedup
+  const mergedStd = deduplicateProxies(currentStd);
+  const mergedWg = deduplicateProxies(currentWg);
+  const mergedGost = u._accGostInput
+    ? u._accGostInput + '\n' + (gostLines.length > 0 ? gostLines.join('\n') : '')
+    : (gostLines.length > 0 ? gostLines.join('\n') : '');
+  const hasStd = mergedStd.length > 0;
+  const hasWg = mergedWg.length > 0;
+  const hasGost = mergedGost.length > 0;
+
+  // 存回内存累计
+  u._accProxies = mergedStd;
+  u._accWgProxies = mergedWg;
+  u._accGostInput = mergedGost;
+  // 累计原始文本（用于原生格式输出）
+  if (content) {
+    u._accRawText = u._accRawText ? u._accRawText + '\n' + content : content;
   }
 
   // 远程 → 清累计
   if (isRemote) {
-    await clearAccState(uid, env);
     u._accProxies = null;
+    u._accWgProxies = null;
+    u._accGostInput = null;
+    u._accRawText = null;
     u._fmtMsg = null;
   }
 
@@ -853,147 +883,96 @@ async function onMsg(msg, env) {
   u._lastStats = null;
   u._lastUrlCount = null;
 
-  // 混合内容：标准节点 + Gost
-  const isMixed = gostLines.length > 0 && proxies && proxies.length > 0;
-
-  // 纯 Gost（无标准节点）
-  if (gostLines.length > 0 && (!proxies || proxies.length === 0)) {
-    // 如果之前有累计的标准节点，保留累计，只追加 gost
-    if (u._accProxies && u._accProxies.length > 0) {
-      // 已有标准节点，只追加 gostLines
-      u._gostInput = (u._gostInput || '') + '\n' + gostLines.join('\n');
-      proxies = u._accProxies;
-    } else {
-      u._lastSubInput = subText;
-      u._gostInput = gostLines.join('\n');
-      u._lastProxies = [];
-      u._isGost = true;
-      u._gostCount = gostLines.length;
-      return replyOrEdit(u, cid, env, {
-        text:
-          '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
-          '\u{1F4CA} \u8282\u70B9\u6570: <b>' + gostLines.length + '</b>\n' +
-          '\u{1F4CD} Gost Tunnel: ' + gostLines.length + '\n' +
-          '\u26A0\uFE0F \u4EC5 Shadowrocket / URI \u5217\u8868\u652F\u6301 Gost Tunnel\n\n' +
-          '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
-        parse_mode: 'HTML',
-        reply_markup: fmtKb(FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)), u._convTtl, u.ttl),
-      });
-    }
+  // 纯 Gost（无任何节点）
+  if (hasGost && !hasStd && !hasWg) {
+    u._lastSubInput = subText;
+    u._lastProxies = [];
+    u._wgProxies = null;
+    u._isGost = true;
+    u._gostCount = mergedGost.split('\n').filter(Boolean).length;
+    u._gostInput = mergedGost;
+    return replyOrEdit(u, cid, env, {
+      text: '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n\u{1F4CA} \u8282\u70B9\u6570: <b>' + u._gostCount + '</b>\n\u{1F4CD} Gost Tunnel: ' + u._gostCount + '\n\u26A0\uFE0F \u4EC5 Shadowrocket / URI \u5217\u8868\u652F\u6301 Gost Tunnel\n\n\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
+      parse_mode: 'HTML',
+      reply_markup: fmtKb(FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)), u._convTtl, u.ttl),
+    });
   }
 
-  if (!proxies || proxies.length === 0) {
-    // 纯文本：保存为短链
+  // 没有任何节点
+  if (!hasStd && !hasWg && !hasGost) {
     try {
       const preview = subText.length > 50 ? subText.slice(0, 50) + '...' : subText;
       const { id, url: clipUrl } = await saveToClipAndTrack(subText, ttl, env, uid, {
-        preview: '\u{1F4C4} ' + preview,
-        nodeCount: 0,
-        source: 'text',
+        preview: '\u{1F4C4} ' + preview, nodeCount: 0, source: 'text',
       });
       const previewShow = subText.length > 150 ? subText.slice(0, 150) + '...' : subText;
       const ttlT = ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttl < 3600 ? Math.round(ttl / 60) + '\u5206\u949F' : Math.round(ttl / 3600) + '\u5C0F\u65F6';
       u._lastContent = subText;
       u._lastSubInput = subText;
       return replyOrEdit(u, cid, env, {
-        text:
-          '\u2705 <b>\u5DF2\u4FDD\u5B58</b>\n\n' +
-          '\u{1F517} <code>' + clipUrl + '</code>\n\n' +
-          '\u{1F4CB} \u9884\u89C8:\n<code>' + escapeHTML(previewShow) + '</code>\n\n' +
-          '\u23F1 ' + ttlT,
-        parse_mode: 'HTML',
-        reply_markup: resultKb(clipUrl),
+        text: '\u2705 <b>\u5DF2\u4FDD\u5B58</b>\n\n\u{1F517} <code>' + clipUrl + '</code>\n\n\u{1F4CB} \u9884\u89C8:\n<code>' + escapeHTML(previewShow) + '</code>\n\n\u23F1 ' + ttlT,
+        parse_mode: 'HTML', reply_markup: resultKb(clipUrl),
       });
     } catch (e) {
-      return replyOrEdit(u, cid, env, {
-        text: '\u274C \u4FDD\u5B58\u5931\u8D25: ' + e.message,
-      });
+      return replyOrEdit(u, cid, env, { text: '\u274C \u4FDD\u5B58\u5931\u8D25: ' + e.message });
     }
   }
 
-  // 有节点 — 统计类型，弹出格式选择
-  const types = {};
-  for (const p of proxies) {
-    types[p.type] = (types[p.type] || 0) + 1;
-  }
-  let typeStr = Object.entries(types)
-    .map(([k, v]) => k + ': ' + v)
-    .join(', ');
-
+  // 设置状态（供回调使用）
+  u._lastProxies = mergedStd;
+  u._wgProxies = mergedWg.length > 0 ? mergedWg : null;
   u._lastSubInput = subText;
-  u._lastProxies = proxies;
+  u._isGost = hasGost;
+  u._gostInput = mergedGost;
+  u._gostCount = mergedGost.split('\n').filter(Boolean).length;
 
-  if (gostLines.length > 0) {
-    u._gostInput = gostLines.join('\n');
-    u._isGost = true;
-    u._gostCount = gostLines.length;
-    typeStr += '\nGost Tunnel: ' + gostLines.length + ' (\u9644\u52A0\u539F\u59CB\u683C\u5F0F)';
-  } else {
-    u._isGost = false;
-    u._gostInput = null;
-    u._gostCount = 0;
-  }
+  // 统计类型
+  const types = {};
+  for (const p of mergedStd) { types[p.type] = (types[p.type] || 0) + 1; }
+  let typeStr = Object.entries(types).map(([k, v]) => k + ': ' + v).join(', ');
+  if (hasWg) typeStr += '\n\u26A1 WireGuard: ' + mergedWg.length + ' \u00B7 Clash Meta YAML \u5355\u72EC\u8F93\u51FA';
+  if (hasGost) typeStr += '\n\u{1F504} Gost Tunnel: ' + u._gostCount + ' \u00B7 \u539F\u59CB\u683C\u5F0F\u5355\u72EC\u8F93\u51FA';
 
-  const gostHint = gostLines.length > 0
-    ? '\n\u26A0\uFE0F ' + gostLines.length + ' \u4E2A Gost Tunnel \u8282\u70B9\u5C06\u4EE5\u539F\u59CB\u683C\u5F0F\u9644\u52A0\u5728\u8F6C\u6362\u7ED3\u679C\u672B\u5C3E\uFF0C\u4EC5 Shadowrocket \u53EF\u7528\n'
-    : '';
-
-  const accHint = accState && accState.proxies && accState.proxies.length > 0
-    ? '\n\u{1F504} <b>\u7D2F\u8BA1\u6A21\u5F0F</b> \u2014 \u53D1\u9001\u66F4\u591A\u8BA2\u9605\u5185\u5BB9\u5C06\u81EA\u52A8\u5408\u5E76\uFF0C\u70B9\u51FB\u683C\u5F0F\u6309\u94AE\u5F00\u59CB\u8F6C\u6362\n'
-    : '';
+  const gostHint = hasGost ? '\n\u{1F504} Gost Tunnel \u00D7 ' + u._gostCount + ' \u2014 \u4FDD\u7559\u539F\u59CB\u683C\u5F0F\u5355\u72EC\u8F93\u51FA\n' : '';
+  const wgHint = hasWg ? '\n\u26A1 WireGuard \u00D7 ' + mergedWg.length + ' \u2014 \u9ED8\u8BA4 Clash Meta YAML \u5355\u72EC\u8F93\u51FA\n' : '';
+  const accHint = '';
 
   const sourceInfo = u._lastUrlCount
-    ? '\n\u{1F517} ' + (typeof u._lastUrlCount === 'number'
-        ? u._lastUrlCount + ' \u4E2A\u8BA2\u9605\u6E90'
-        : u._lastUrlCount + ' \u4E2A\u8BA2\u9605\u6E90')
+    ? '\n\u{1F517} ' + (typeof u._lastUrlCount === 'number' ? u._lastUrlCount + ' \u4E2A\u8BA2\u9605\u6E90' : u._lastUrlCount + ' \u4E2A\u8BA2\u9605\u6E90')
     : '';
-  const uaInfo = u._lastFetchUa
-    ? '\n\u{1F916} ' + escapeHTML(u._lastFetchUa)
-    : '';
+  const uaInfo = u._lastFetchUa ? '\n\u{1F916} ' + escapeHTML(u._lastFetchUa) : '';
 
   const statsLine = u._lastStats
-    ? '\n\u{1F4CA} <b>' + u._lastStats.actualNodes + '</b> \u5B9E\u9645' +
-      ' (\u603B: ' + u._lastStats.totalNodes +
+    ? '\n\u{1F4CA} <b>' + u._lastStats.actualNodes + '</b> \u5B9E\u9645 (\u603B: ' + u._lastStats.totalNodes +
       (u._lastStats.dupUrls > 0 ? ', \u53BB\u91CD\u94FE\u63A5: ' + u._lastStats.dupUrls : '') +
       (u._lastStats.dupSubs > 0 ? ', \u91CD\u590D\u8BA2\u9605: ' + u._lastStats.dupSubs : '') +
       (u._lastStats.dupNodes > 0 ? ', \u91CD\u590D\u8282\u70B9: ' + u._lastStats.dupNodes : '') + ')'
     : '';
 
+  // 格式选择消息
+  const fmtText =
+    '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
+    (statsLine ? '' : '\u{1F4CA} \u8282\u70B9\u6570: <b>' + mergedStd.length + '</b>\n') +
+    statsLine + '\n' +
+    '\u{1F4CD} ' + typeStr + '\n' +
+    sourceInfo + uaInfo + '\n' +
+    gostHint + wgHint + accHint +
+    '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:';
+
   if (!isRemote && u._fmtMsg && u._fmtMsg.id) {
     await tg('editMessageText', env.BOT_TOKEN, {
-      chat_id: u._fmtMsg.cid,
-      message_id: u._fmtMsg.id,
-      text:
-        '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
-        (statsLine ? '' : '\u{1F4CA} \u8282\u70B9\u6570: <b>' + proxies.length + '</b>\n') +
-        statsLine + '\n' +
-        '\u{1F4CD} ' + typeStr + '\n' +
-        sourceInfo + uaInfo + '\n' +
-        gostHint +
-        accHint +
-        '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
-      parse_mode: 'HTML',
+      chat_id: u._fmtMsg.cid, message_id: u._fmtMsg.id,
+      text: fmtText, parse_mode: 'HTML',
       reply_markup: fmtKb(null, u._convTtl, u.ttl),
     });
-    if (!isRemote) u._accProxies = proxies;
   } else {
     const sent = await replyOrEdit(u, cid, env, {
-      text:
-        '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
-        (statsLine ? '' : '\u{1F4CA} \u8282\u70B9\u6570: <b>' + proxies.length + '</b>\n') +
-        statsLine + '\n' +
-        '\u{1F4CD} ' + typeStr + '\n' +
-        sourceInfo + uaInfo + '\n' +
-        gostHint +
-        accHint +
-        '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
-      parse_mode: 'HTML',
+      text: fmtText, parse_mode: 'HTML',
       reply_markup: fmtKb(null, u._convTtl, u.ttl),
     });
     if (!isRemote) {
       const msgId = sent?.result?.message_id || (sent?.from_edit ? u.promptMid : null);
       u._fmtMsg = msgId ? { cid: cid, id: msgId } : null;
-      u._accProxies = proxies;
     }
   }
 }
@@ -1013,7 +992,6 @@ async function onCb(q, env) {
   });
 
   if (d === 'menu') {
-    await clearAccState(uid, env);
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
@@ -1418,62 +1396,69 @@ async function onCb(q, env) {
       });
     }
 
+    // 非 gost 格式的标准节点转换
     let output;
     try {
       output = ProxyUtils.produce(u._lastProxies, fmt);
     } catch (e) {
       return tg('editMessageText', env.BOT_TOKEN, {
-        chat_id: cid,
-        message_id: mid,
+        chat_id: cid, message_id: mid,
         text: '\u274C \u8F6C\u6362\u5931\u8D25: ' + e.message,
-        parse_mode: 'HTML',
-        reply_markup: fmtKb(null, u._convTtl, u.ttl),
+        parse_mode: 'HTML', reply_markup: fmtKb(null, u._convTtl, u.ttl),
       });
     }
 
     if (!output) {
       return tg('editMessageText', env.BOT_TOKEN, {
-        chat_id: cid,
-        message_id: mid,
+        chat_id: cid, message_id: mid,
         text: '\u274C \u8F6C\u6362\u7ED3\u679C\u4E3A\u7A7A',
-        parse_mode: 'HTML',
-        reply_markup: fmtKb(null, u._convTtl, u.ttl),
+        parse_mode: 'HTML', reply_markup: fmtKb(null, u._convTtl, u.ttl),
       });
-    }
-
-    // 混合内容：追加 Gost 行到转换结果末尾
-    if (u._isGost && u._gostInput && u._lastProxies?.length) {
-      const sep = fmt === 'uri' ? '\n' : '\n\n# Gost Tunnel \u8282\u70B9\uFF08\u4EC5 Shadowrocket \u53EF\u7528\uFF09\n';
-      output = String(output).trimEnd() + sep + u._gostInput;
     }
 
     await tg('editMessageText', env.BOT_TOKEN, {
-      chat_id: cid,
-      message_id: mid,
-      text: '\u{1F504} \u8F6C\u6362\u4E2D... (' + fmtLabel + ')',
-      parse_mode: 'HTML',
+      chat_id: cid, message_id: mid,
+      text: '\u{1F504} \u8F6C\u6362\u4E2D... (' + fmtLabel + ')', parse_mode: 'HTML',
     });
 
     try {
+      const extraUrls = [];
       const { id, url: clipUrl } = await saveToClipAndTrack(String(output), getEffectiveTtl(u), env, uid, {
         preview: fmtLabel + ' \u00B7 ' + u._lastProxies.length + ' \u8282\u70B9',
-        nodeCount: u._lastProxies.length,
-        source: 'convert',
+        nodeCount: u._lastProxies.length, source: 'convert',
       });
       u._lastContent = String(output);
+
+      // WG 侧链
+      const wg = u._wgProxies || [];
+      if (wg.length > 0) {
+        const wgOut = ProxyUtils.produce(wg, 'clashmeta');
+        if (wgOut) {
+          const { url: wgUrl } = await saveToClipAndTrack(String(wgOut), getEffectiveTtl(u), env, uid, {
+            preview: 'WireGuard \u00D7 ' + wg.length + ' (Clash Meta)', nodeCount: wg.length, source: 'wg',
+          });
+          extraUrls.push({ text: '\u26A1 WireGuard', url: wgUrl });
+        }
+      }
+
+      // Gost 侧链
+      if (u._gostInput) {
+        const { url: gostUrl } = await saveToClipAndTrack(u._gostInput, getEffectiveTtl(u), env, uid, {
+          preview: 'Gost Tunnel \u00D7 ' + u._gostCount, nodeCount: u._gostCount, source: 'gost',
+        });
+        extraUrls.push({ text: '\u{1F504} Gost', url: gostUrl });
+      }
+
       const effTtl2 = getEffectiveTtl(u);
       u._convTtl = null;
       const ttlT = effTtl2 === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : effTtl2 < 3600 ? Math.round(effTtl2 / 60) + '\u5206\u949F' : Math.round(effTtl2 / 3600) + '\u5C0F\u65F6';
+      let resText = '\u2705 <b>\u8F6C\u6362\u5B8C\u6210</b>\n\n\u{1F4CA} ' + u._lastProxies.length + ' \u8282\u70B9 \u2192 <b>' + fmtLabel + '</b>\n\n\u{1F517} <code>' + clipUrl + '</code>\n';
+      for (const e of extraUrls) resText += '\n' + e.text + '\n<code>' + e.url + '</code>\n';
+      resText += '\n\n\u23F1 ' + ttlT;
       await tg('editMessageText', env.BOT_TOKEN, {
-        chat_id: cid,
-        message_id: mid,
-        text:
-          '\u2705 <b>\u8F6C\u6362\u5B8C\u6210</b>\n' +
-          '\u{1F4CA} ' + u._lastProxies.length + ' \u8282\u70B9 \u2192 <b>' + fmtLabel + '</b>\n\n' +
-          '\u{1F517} <code>' + clipUrl + '</code>\n\n' +
-          '\u23F1 ' + ttlT,
-        parse_mode: 'HTML',
-        reply_markup: resultKb(clipUrl),
+        chat_id: cid, message_id: mid,
+        text: resText, parse_mode: 'HTML',
+        reply_markup: multiResultKb(clipUrl, extraUrls),
       });
     } catch (e) {
       const preview = String(output).length > 300 ? String(output).slice(0, 300) + '...' : String(output);
