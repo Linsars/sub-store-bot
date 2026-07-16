@@ -1509,7 +1509,8 @@ export default {
       const body = await request.json();
       if (!body) return new Response('ok');
 
-      if (env.WEBHOOK_SECRET && env.WEBHOOK_SECRET !== url.searchParams.get('secret')) {
+      // 验证 X-Telegram-Bot-Api-Secret-Token
+      if (env.WEBHOOK_SECRET && request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.WEBHOOK_SECRET) {
         return new Response('unauthorized', { status: 401 });
       }
 
@@ -1573,7 +1574,13 @@ export default {
       if (env.BOT_TOKEN) {
         try {
           const wh = `${url.protocol}//${url.hostname}/webhook`;
-          const r1 = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook?url=${wh}`);
+          const whParams = { url: wh };
+          if (env.WEBHOOK_SECRET) whParams.secret_token = env.WEBHOOK_SECRET;
+          const r1 = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(whParams),
+          });
           setupResult.webhook = (await r1.json()).ok === true;
 
           const r2 = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setMyCommands`, {
