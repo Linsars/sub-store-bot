@@ -36,27 +36,10 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 
 部署完成后：
 
-1. 去 Cloudflare Dashboard → Workers → `sub-store-bot`，添加环境变量：
-   - `BOT_TOKEN` — Telegram Bot Token（必填）
+1. 去 `变量与密钥` 页面，添加环境变量：
    - `CLIP_URL` — 你的 Worker 域名，如 `https://xxx.workers.dev`（必填，短链基础 URL）
-   - `ALLOWED_USERS` — 允许使用的用户 ID，逗号分隔（可选，不设则全部开放）
-2. 绑定 KV Namespace（绑定名 `KV`）
-3. 访问 `https://你的worker域名/setup` 激活 Webhook（或用 `/webhook` 手动注册）
-4. Telegram 里发 `/start`
-
-> ⚠️ **一键按钮注意**：`wrangler.toml` 的 `kv_namespaces` 里不要写 `id` 字段（已配置好），否则按钮页面报错。
-
-## GitHub Actions 自动部署
-
-设好以下 Secrets，每次推 `main` 自动更新：
-
-| Secret | 说明 |
-|--------|------|
-| `CF_API_TOKEN` | Cloudflare API Token（Worker 编辑权限） |
-| `CF_ACCOUNT_ID` | Cloudflare 账户 ID |
-| `BOT_TOKEN` | Telegram Bot Token |
-| `CLIP_URL` | 短链域名，如 `https://xxx.workers.dev` |
-| `ALLOWED_USERS` | 可选，用户 ID 逗号分隔 |
+2. 去 `描述` 页点一下`你的worker域名`激活bot
+3. Telegram 里发 `/start`
 
 ## 环境变量
 
@@ -67,16 +50,6 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 | `ALLOWED_USERS` | 允许的用户 ID（逗号分隔），不设则全部开放 | ❌ |
 | `KV` | KV Namespace 绑定名 | ✅ |
 
-## 手动部署
-
-```bash
-export CLOUDFLARE_API_TOKEN="your_token"
-export BOT_TOKEN="your_bot_token"
-export CLIP_URL="https://your-worker.workers.dev"
-export KV_NAMESPACE_ID="your_kv_ns_id"
-python3 deploy.py
-```
-
 ## License
 
-MIT
+MIT 写完啦，你爱咋改就咋改吧
