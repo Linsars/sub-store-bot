@@ -27,12 +27,13 @@ jobs:
           CLIP_URL: ${{ secrets.CLIP_URL || '' }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
-          if [ -n "$CLIP_URL" ]; then
-            npx wrangler deploy --config wrangler.toml --var CLIP_URL="$CLIP_URL"
-          else
-            npx wrangler deploy --config wrangler.toml
-          fi
+          npx wrangler deploy --config wrangler.toml
 
+          if [ -n "$CLIP_URL" ]; then
+            printf '%s' "$CLIP_URL" | npx wrangler secret put CLIP_URL --name sub-store-bot
+          else
+            echo "CLIP_URL secret is empty; skipping"
+          
           if [ -n "$BOT_TOKEN" ]; then
             printf '%s' "$BOT_TOKEN" | npx wrangler secret put BOT_TOKEN --name sub-store-bot
           else
