@@ -16,12 +16,13 @@ jobs:
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          wranglerVersion: '3.90.0'
+          wranglerVersion: '4.111.0'
+          command: deploy
           # KV Namespace ID — 一键部署后去 Dashboard 查看，设为 Secret
           # 如果没设， wrangler 会创建一个新的 namespace
           vars: |
             CLIP_URL: ${{ secrets.CLIP_URL || '' }}
           secrets: |
             BOT_TOKEN
-        env: 
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}      # ← GitHub Secret 转为环境变量
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
