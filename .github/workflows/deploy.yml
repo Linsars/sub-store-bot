@@ -22,7 +22,15 @@ jobs:
           # 如果没设， wrangler 会创建一个新的 namespace
           vars: |
             CLIP_URL: ${{ secrets.CLIP_URL || '' }}
-          secrets: |
-            BOT_TOKEN
+
+      - name: Update BOT_TOKEN secret
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          if [ -n "$BOT_TOKEN" ]; then
+            printf '%s' "$BOT_TOKEN" | npx wrangler secret put BOT_TOKEN --name sub-store-bot
+          else
+            echo "BOT_TOKEN secret is empty; skipping"
+          fi
