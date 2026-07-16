@@ -22,3 +22,5 @@ jobs:
             CLIP_URL: ${{ secrets.CLIP_URL || '' }}
           secrets: |
             BOT_TOKEN
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
