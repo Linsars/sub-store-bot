@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 # 部署完成后去 Dashboard 把 Namespace ID 填到 GitHub Secrets
 [[kv_namespaces]]
 binding = "KV"
-
+id = "placeholder" # ← 临时占位符
 
 [vars]
 ALLOWED_USERS = "允许的用户 ID（逗号分隔），不设则全部开放"
