@@ -33,6 +33,7 @@ jobs:
             printf '%s' "$CLIP_URL" | npx wrangler secret put CLIP_URL --name sub-store-bot
           else
             echo "CLIP_URL secret is empty; skipping"
+          fi
           
           if [ -n "$BOT_TOKEN" ]; then
             printf '%s' "$BOT_TOKEN" | npx wrangler secret put BOT_TOKEN --name sub-store-bot
