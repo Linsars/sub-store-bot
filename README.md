@@ -2,8 +2,6 @@
 
 Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Linsars/sub-store-bot)
-
 ---
 
 ## 功能
@@ -32,14 +30,20 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 
  ## 一键部署
 
+
+1. 点这个屎黄色按钮
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Linsars/sub-store-bot)
+
+2. 在部署页面选择 你的仓库
+3. 输入对应的ALLOWED_USERS、BOT_TOKEN、WEBHOOK_SECRET变量，可以部署后在 变量与密钥 页面改
 
 部署完成后：
 
-1. 去 `变量与密钥` 页面，添加环境变量：
-   - `CLIP_URL` — 你的 Worker 域名，如 `https://xxx.workers.dev`（必填，短链基础 URL）
-2. 去 `描述` 页点一下`你的worker域名`激活bot
-3. Telegram 里发 `/start`
+1. 去 `域` 页面，打开域名路由或者自定义域名（可选）
+2. 去 `变量与密钥` 页面，添加环境变量：
+   -变量名: `CLIP_URL` — 值:你的 Worker 域名或者能路由到这个worker的你的域名，如 `https://xxx.workers.dev`（必填，短链基础 URL）
+3. 去 `描述` 页面，点一下`你的worker域名`激活bot
+4. Telegram 里发 `/start`
 
 ## 环境变量
 
@@ -47,8 +51,9 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 |------|------|------|
 | `BOT_TOKEN` | Telegram Bot Token | ✅ |
 | `CLIP_URL` | 短链基础 URL（如 `https://xxx.workers.dev`） | ✅ |
-| `ALLOWED_USERS` | 允许的用户 ID（逗号分隔），不设则全部开放 | ❌ |
 | `KV` | KV Namespace 绑定名 | ✅ |
+| `ALLOWED_USERS` | 允许的用户 ID（逗号分隔），不设则全部开放 | ❌ |
+| `WEBHOOK_SECRET` | 域名防呆用，可以不设置留空 | ❌ |
 
 ## License
 
