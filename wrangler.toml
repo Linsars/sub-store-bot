@@ -4,10 +4,9 @@ compatibility_date = "2025-09-27"
 compatibility_flags = ["nodejs_compat"]
 
 # 一键部署时 KV Namespace 会自动创建（不写 id）
-# 部署完成后去 Dashboard 把 Namespace ID 填到 GitHub Secrets
+# 如需复用已有 namespace，可在部署后把真实 ID 填到 Cloudflare Dashboard
 [[kv_namespaces]]
 binding = "KV"
-id = "$KV_NAMESPACE_ID" # 环境变量语法
 
 [vars]
 ALLOWED_USERS = "允许的用户 ID（逗号分隔），不设则全部开放"
