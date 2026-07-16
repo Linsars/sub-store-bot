@@ -73,7 +73,7 @@ git push
 2. **Add New → Project**
 3. 选择 `sub-fetch-proxy` 仓库
 4. 保持默认设置（Framework = Other），点击 **Deploy**
-5. 部署完成会得到一个域名如 `sub-fetch-proxy.vercel.app`
+5. 部署完成会得到一个域名如 `你的项目名.vercel.app`
 
 > ⚠️ **不要绑定自定义域名到 Cloudflare**：如果你的自定义域名走 CF 代理，CF Worker 调用 `${你的域名}` 仍然是 CF-to-CF 请求，依然会被拦截。请直接使用 Vercel 提供的 `*.vercel.app` 域名。
 
@@ -83,7 +83,7 @@ git push
 
 | 变量名 | 值 | 说明 |
 |--------|-----|------|
-| `PROXY_URL` | `https://sub-fetch-proxy.vercel.app/api?url=` | 订阅链接会拼在后面作为 `url` 参数 |
+| `PROXY_URL` | `https://你的项目名.vercel.app/api?url=` | 订阅链接会拼在后面作为 `url` 参数 |
 
 ## 验证
 
@@ -93,7 +93,7 @@ curl -s -o /dev/null -w "%{http_code}" "https://example-sub.com/link"
 # → 403
 
 # 走反代（应 200）
-curl -s -o /dev/null -w "%{http_code}" "https://sub-fetch-proxy.vercel.app/api?url=https%3A%2F%2Fexample-sub.com%2Flink"
+curl -s -o /dev/null -w "%{http_code}" "https://你的项目名.vercel.app/api?url=https%3A%2F%2Fexample-sub.com%2Flink"
 # → 200
 ```
 

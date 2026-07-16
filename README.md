@@ -48,7 +48,7 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎（8
 1. 去 **域** 页面，打开域名路由或绑定自定义域名（可选）
 2. 去 **变量与密钥** 页面，添加环境变量：
    - `CLIP_URL` = 你的 Worker 域名，如 `https://xxx.workers.dev`（**必填**，短链基础 URL）
-   - `PROXY_URL` = 反代地址（如 `https://sub-fetch-proxy.vercel.app/api?url=`），用于拉取 CF 防护的订阅（[搭建教程](docs/proxy-setup.md)）
+   - `PROXY_URL` = 反代地址（如 `https://你的项目名.vercel.app/api?url=`），用于拉取 CF 防护的订阅（[搭建教程](docs/proxy-setup.md)）
    - `DEBUG_TOKEN` = 随意设个密码，用于 debug-fetch 接口鉴权（可选）
 3. 去 **描述** 页面，点 Worker 域名激活 bot
 4. Telegram 里发 `/start`

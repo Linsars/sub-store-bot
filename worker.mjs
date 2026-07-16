@@ -1569,7 +1569,7 @@ async function onCb(q, env) {
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
-      text: '\u2705 \u5DF2\u8BBE\u7F6E: ' + (u.ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : u.ttl < 3600 ? Math.round(u.ttl / 60) + '\u5206\u949F' : Math.round(u.ttl / 3600) + '\u5C0F\u65F6') + '\n\n<code>[DEBUG] ' + d + '</code>',
+      text: '\u2705 \u5DF2\u8BBE\u7F6E: ' + (u.ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : u.ttl < 3600 ? Math.round(u.ttl / 60) + '\u5206\u949F' : Math.round(u.ttl / 3600) + '\u5C0F\u65F6'),
       parse_mode: 'HTML',
       reply_markup: mainKb(),
     });
@@ -1723,7 +1723,7 @@ async function onCb(q, env) {
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
-      text: '\u23F1 <b>\u4FEE\u6539\u77ED\u94FE\u6642\u6548</b>\n\n\u9009\u62E9\u65B0\u7684\u6642\u6548\uFF0C\u5DF2\u8FC7\u671F\u7684\u77ED\u94FE\u65E0\u6CD5\u6062\u590D\u3002\n\n<code>[DEBUG] ' + d + '</code>',
+      text: '\u23F1 <b>\u4FEE\u6539\u77ED\u94FE\u6642\u6548</b>\n\n\u9009\u62E9\u65B0\u7684\u6642\u6548\uFF0C\u5DF2\u8FC7\u671F\u7684\u77ED\u94FE\u65E0\u6CD5\u6062\u590D\u3002',
       parse_mode: 'HTML',
       reply_markup: ttlKb(0, 'chg_ttl_' + linkId + ':'),
     });
@@ -1734,7 +1734,6 @@ async function onCb(q, env) {
     const colonIdx = rest.lastIndexOf(':');
     const linkId = rest.slice(0, colonIdx);
     const newTtl = parseInt(rest.slice(colonIdx + 1));
-    await tg('answerCallbackQuery', env.BOT_TOKEN, { callback_query_id: q.id, text: '🔬 短链TTL回掉: ' + d });
     try {
       const data = await env.KV.get('share_' + linkId, 'json');
       if (data && data.text) {
@@ -1744,7 +1743,7 @@ async function onCb(q, env) {
         return tg('editMessageText', env.BOT_TOKEN, {
           chat_id: cid,
           message_id: mid,
-          text: '\u274C \u77ED\u94FE\u5DF2\u8FC7\u671F\uFF0C\u65E0\u6CD5\u4FEE\u6539\n\n\u5DF2\u8FC7\u671F\u7684\u77ED\u94FE\u65E0\u6CD5\u6062\u590D\uFF0C\u8BF7\u8FD4\u56DE\u5217\u8868\u5220\u9664\u3002\n\n<code>[DEBUG] ' + d + '</code>',
+          text: '\u274C \u77ED\u94FE\u5DF2\u8FC7\u671F\uFF0C\u65E0\u6CD5\u4FEE\u6539\n\n\u5DF2\u8FC7\u671F\u7684\u77ED\u94FE\u65E0\u6CD5\u6062\u590D\uFF0C\u8BF7\u8FD4\u56DE\u5217\u8868\u5220\u9664\u3002',
           parse_mode: 'HTML',
           reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u5217\u8868', callback_data: 'my_links_0' }]] },
         });
@@ -1767,7 +1766,6 @@ async function onCb(q, env) {
       text += linkStatusIcon(l) + ' <b>' + escapeHTML(l.preview) + '</b>\n';
       text += '\u{1F4CA} ' + (l.nodeCount || 0) + ' \u8282\u70B9  \u00B7 ' + statusText + '\n\n';
       text += '\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
-      text += '\n\n<code>[DEBUG] ' + d + '</code>';
       return tg('editMessageText', env.BOT_TOKEN, {
         chat_id: cid,
         message_id: mid,
