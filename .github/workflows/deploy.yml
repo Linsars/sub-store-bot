@@ -23,3 +23,6 @@ jobs:
           secrets: |
             BOT_TOKEN
             ALLOWED_USERS
+        env: 
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}      # ← GitHub Secret 转为环境变量
+          ALLOWED_USERS: ${{ secrets.ALLOWED_USERS }}  # ← GitHub Secret 转为环境变量
