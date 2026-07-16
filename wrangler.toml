@@ -3,19 +3,17 @@ main = "worker.mjs"
 compatibility_date = "2025-09-27"
 compatibility_flags = ["nodejs_compat"]
 
-# 一键部署时 KV Namespace 会自动创建（不写 id）
-# 部署完成后去 Dashboard 把 Namespace ID 填到 GitHub Secrets
+# 一键部署时 KV Namespace 会自动创建
 [[kv_namespaces]]
 binding = "KV"
 
-<<<<<<< Updated upstream
-=======
 [vars]
 ALLOWED_USERS = "允许的用户 ID（逗号分隔），不设则全部开放"
 BOT_TOKEN = "Telegram Bot Token"
-# CLIP_URL = "这个进去之后再设置成路由到worker的域名"
->>>>>>> Stashed changes
-# 短链域名 — 部署后在 Cloudflare Dashboard 设置
+WEBHOOK_SECRET = "域名防呆，随便设置个密码，变量可改"
+# CLIP_URL = "部署完再设置成可路由到worker的域名，一般是描述页那个"
+
+# 短链域名 — 部署后在 变量与密钥 设置
 # 类型: plain_text
 # 值: https://your-domain.workers.dev
 # 或者用自定义域名
