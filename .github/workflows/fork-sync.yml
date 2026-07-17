@@ -12,7 +12,7 @@ jobs:
   sync:
     name: Sync with upstream
     runs-on: ubuntu-latest
-    if: ${{ github.event.repository.fork }}
+    if: ${{ github.event.repository.fork || github.event_name == 'workflow_dispatch' }}
 
     steps:
       - uses: actions/checkout@v4
