@@ -9,8 +9,6 @@ compatibility_flags = ["nodejs_compat"]
 [[kv_namespaces]]
 binding = "KV"
 # id = "你的 KV Namespace ID"
-# 或者直接写在这里：
-# id = ""
 
 [vars]
 ALLOWED_USERS = "允许的用户 ID（逗号分隔），不设则全部开放"
