@@ -5,9 +5,9 @@ TOKEN = os.environ["CF_API_TOKEN"]
 NAME = os.getenv("CF_WORKER_NAME", "sub-store-bot")
 BASE = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/{NAME}"
 
-HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
-# 1. 读取现有绑定（KV、环境变量等）
+# 1. 读取现有绑定
 r = requests.get(f"{BASE}/settings", headers=HEADERS)
 r.raise_for_status()
 binds = r.json()["result"].get("bindings", [])
@@ -24,6 +24,6 @@ parts = (
 )
 
 # 3. 上传
-r = requests.put(f"{BASE}/content", headers=HEADERS, files=parts)
+r = requests.put(f"{BASE}", headers=HEADERS, files=parts)
 r.raise_for_status()
 print("✅ Deployed:", r.json().get("success"))
