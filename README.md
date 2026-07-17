@@ -52,6 +52,17 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎（8
 3. 去 **描述** 页面，点 Worker 域名激活 bot
 4. Telegram 里发 `/start`
 
+### 同步本项目更新
+
+以后此仓库更新了，你的仓库不会自动同步。按以下步骤：
+
+1. 打开你的 GitHub 仓库，点 Add file → Create new file
+2. 文件名填  .github/workflows/fork-sync.yml 
+3. 去  [_workflows/fork-sync.yml](_workflows/fork-sync.yml)  复制内容粘贴到你的fork-sync.yml 
+4. Commit
+5. 去 **Actions** 页面 → 绿色按钮启用 → 左侧点 **Fork Sync** → **Run workflow**
+
+
 ## 环境变量
 
 | 变量 | 说明 | 必填 |
