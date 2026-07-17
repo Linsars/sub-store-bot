@@ -36,11 +36,7 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎（8
 
 ## 一键部署
 
-1. 点这个按钮
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Linsars/sub-store-bot)
-
-2. 在部署页面选择你的仓库
-3. 输入对应的 `ALLOWED_USERS`、`BOT_TOKEN`、`WEBHOOK_SECRET` 变量（部署后也可在 变量与密钥 页面改）
 
 部署完成后：
 
@@ -51,7 +47,7 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎（8
    - `CLIP_URL` = "短链基础 URL，一般是worker域名"
    - `WEBHOOK_SECRET` = "域名防呆，随便设置个密码"
    - `PROXY_URL` = "反代基础 URL，（可选）"
-# DEBUG_TOKEN = "debug-fetch 接口鉴权 Token（可选）"
+   - `DEBUG_TOKEN` = "debug-fetch 接口鉴权 Token（可选）"
    - `CLIP_URL` = 你的 Worker 域名，如 `https://xxx.workers.dev`（**必填**，短链基础 URL）
    - `PROXY_URL` = 反代地址，绕过 CF 拦截（可选，[搭建教程](docs/proxy-setup.md)）
    - `DEBUG_TOKEN` = 随意设个密码，用于 debug-fetch 接口鉴权（可选）
