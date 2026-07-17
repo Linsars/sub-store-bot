@@ -57,3 +57,13 @@ jobs:
           git commit --no-edit
           git push origin main
           echo "✅ 同步完成！"
+
+      - name: Deploy to Cloudflare Workers
+        if: success()
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_WORKER_NAME: ${{ secrets.CF_WORKER_NAME || 'sub-store-bot' }}
+        run: |
+          echo "🚀 部署代码到 Cloudflare..."
+          python3 deploy.py
