@@ -2,7 +2,7 @@ name: Fork Sync
 
 on:
   schedule:
-    - cron: "0 6 * * *"   # 每天北京时间 14:00 执行
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   sync:
-    name: Sync with upstream
+    name: Sync & Deploy
     runs-on: ubuntu-latest
     if: ${{ github.event.repository.fork || github.event_name == 'workflow_dispatch' }}
 
@@ -19,12 +19,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Sync upstream changes
+      - name: Sync upstream
+        id: sync
         run: |
           git config user.name "GitHub Actions Bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 添加上游仓库
+          # 添加上游
           if git remote get-url upstream >/dev/null 2>&1; then
             git remote set-url upstream https://github.com/Linsars/sub-store-bot.git
           else
@@ -34,36 +35,37 @@ jobs:
           git fetch --prune origin main
           git fetch --prune upstream main
 
-          git checkout main
-          # 同步到 origin/main（上次同步的成果）
-          git reset --hard origin/main
-
-          # 检查上游是否已合入（复用 merge-base，不受 SHA 不同影响）
-          if git merge-base --is-ancestor upstream/main HEAD; then
-            echo "✨ 已是最新，无需同步。"
+          # 检查是否已是最新
+          if git merge-base --is-ancestor upstream/main origin/main; then
+            echo "✨ 已是最新"
+            echo "changed=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          echo "🚀 合并上游 main..."
-          # --allow-unrelated-histories: 一键部署是"源码导入"，无共同 git 历史
-          # --no-commit: 先暂存，方便处理 workflow 文件
-          # -X theirs: 冲突时用上游版本
+          # 备份本地配置（不随上游覆盖）
+          mkdir -p /tmp/wfbak
+          cp -r .github/workflows/* /tmp/wfbak/ 2>/dev/null || true
+          cp wrangler.toml /tmp/wfbak/ 2>/dev/null || true
+
+          # 硬重置到 origin + 合并上游
+          git checkout main
+          git reset --hard origin/main
           git merge upstream/main --allow-unrelated-histories --no-commit -X theirs
 
-          # GITHUB_TOKEN 不能推送 .github/workflows/，从暂存区移除
-          git rm --cached -r .github/workflows/ 2>/dev/null || true
-          rm -rf .github/workflows/ 2>/dev/null || true
+          # 恢复本地配置
+          mkdir -p .github/workflows
+          cp -r /tmp/wfbak/* .github/workflows/ 2>/dev/null || true
+          cp /tmp/wfbak/wrangler.toml . 2>/dev/null || true
+          rm -rf /tmp/wfbak
 
           git commit --no-edit
           git push origin main
-          echo "✅ 同步完成！"
+          echo "changed=true" >> $GITHUB_OUTPUT
 
-      - name: Deploy to Cloudflare Workers
-        if: success()
+      - name: Deploy to CF
+        if: steps.sync.outputs.changed == 'true'
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_WORKER_NAME: ${{ secrets.CF_WORKER_NAME || github.event.repository.name }}
-        run: |
-          echo "🚀 部署代码到 Cloudflare..."
-          python3 deploy.py
+        run: python3 deploy.py
