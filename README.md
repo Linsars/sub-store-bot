@@ -51,6 +51,21 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎（8
 4. 去 **描述** 页面，点 Worker 域名激活 bot
 5. Telegram 里发 `/start`
 
+### 同步更新推送
+
+以后此仓库更新（应该是不会了）了，想自动更新同步拉取可以按以下步骤：
+
+1. 打开你的 GitHub 仓库
+2. **Add file → Create new file**
+3. 路径填  `.github/workflows/fork-sync.yml`  → 把 [_workflows](docs/_workflows/fork-sync.yml) 的内容粘贴进你新建的yml文件  → **Commit**
+4. 点 **More** → **Settings** → **Secrets and variables** → **Actions** → **New repository secret** 添加两个变量：
+   - Name： `CF_ACCOUNT_ID`
+   - Secret： 你的CFID，如登录cf后打开主页地址栏https://dash.cloudflare.com/你的CFID就是这串/home
+   再创建一个
+   - Name： `CF_API_TOKEN`
+   - Secret： 你的CF操作令牌。CF首页点左上角三杠最下面 **管理账户** → **账户API令牌** 创建一个
+5. 去 **Actions** 页面 → 轻点 **Allworkers** → 点 **Fork Sync** → 猛击 **Run workflow** → 小圆点变绿自动部署激活
+
 ## 环境变量
 
 | 变量 | 说明 | 必填 |
