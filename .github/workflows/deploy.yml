@@ -16,10 +16,10 @@ jobs:
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          # KV Namespace ID — 一键部署后去 Dashboard 查看，设为 Secret
-          # 如果没设， wrangler 会创建一个新的 namespace
-          vars: |
-            CLIP_URL: ${{ secrets.CLIP_URL || '' }}
           secrets: |
             BOT_TOKEN
+            CLIP_URL
             ALLOWED_USERS
+            WEBHOOK_SECRET
+            PROXY_URL
+            DEBUG_TOKEN
