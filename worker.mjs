@@ -95,6 +95,7 @@ function fmtKb(allowed, convTtl, ttlDefault, u) {
   const ttlLabel = ttlVal === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttlVal < 3600 ? Math.round(ttlVal / 60) + '\u5206\u949F' : Math.round(ttlVal / 3600) + '\u5C0F\u65F6';
   rows.push([{ text: '\u{23F1} \u672C\u6B21\u65F6\u9650: ' + ttlLabel + ' / ' + (u?._accessLimit || '\u4E0D\u9650'), callback_data: 'conv_limit_menu' }]);
   rows.push([{ text: (u?._burn ? '\u2705 ' : '') + '\u{1F525} \u9605\u540E\u5373\u711A', callback_data: 'conv_toggle_burn' }]);
+  rows.push([{ text: (u?._landing ? '\u2705 ' : '') + '\u{1F504} \u6885\u5F00\u4E8C\u5EA6', callback_data: 'conv_toggle_landing' }]);
   rows.push([{ text: '\u2190 返回', callback_data: 'menu' }]);
   return { inline_keyboard: rows };
 }
@@ -555,6 +556,9 @@ async function saveToClip(text, ttl, env, maxAccess, extra = {}) {
     accessedIPs: [],
     ttl: ttl || 0,
     burn: extra.burn || false,
+    landing: extra.landing || false,
+    nodeCount: extra.nodeCount || 0,
+    _createdAt: Date.now(),
     subInfo: extra.subInfo || null,
   });
   const kvOpts = {};
@@ -1027,6 +1031,7 @@ async function onMsg(msg, env) {
       const { id, url: clipUrl } = await saveToClipAndTrack(subText, ttl, env, uid, {
         preview: '\u{1F4C4} ' + preview, nodeCount: 0, source: 'text',
         burn: u?._burn || false,
+        landing: u?._landing || false,
       }, getEffectiveMaxAccess(u));
       const previewShow = subText.length > 150 ? subText.slice(0, 150) + '...' : subText;
       const ttlT = ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttl < 3600 ? Math.round(ttl / 60) + '\u5206\u949F' : Math.round(ttl / 3600) + '\u5C0F\u65F6';
@@ -1633,6 +1638,16 @@ async function onCb(q, env) {
     });
   }
 
+  if (d === 'conv_toggle_landing') {
+    u._landing = !u._landing;
+    const formats = u._isGost && (!u._lastProxies || u._lastProxies.length === 0)
+      ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
+    return tg('editMessageReplyMarkup', env.BOT_TOKEN, {
+      chat_id: cid, message_id: mid,
+      reply_markup: fmtKb(formats, u._convTtl, u.ttl, u),
+    });
+  }
+
   if (d === 'conv_back') {
     const isGost = u._isGost && (!u._lastProxies || u._lastProxies.length === 0);
     const formats = isGost ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
@@ -1740,6 +1755,7 @@ async function onCb(q, env) {
           nodeCount: u._gostCount || 0,
           source: 'gost',
           burn: u?._burn || false,
+          landing: u?._landing || false,
         }, getEffectiveMaxAccess(u));
         u._lastContent = rawText;
         const effTtl = getEffectiveTtl(u);
@@ -1845,6 +1861,7 @@ async function onCb(q, env) {
         preview: fmtLabel + ' · ' + u._lastProxies.length + ' 节点',
         nodeCount: u._lastProxies.length, source: 'convert',
         burn: u?._burn || false,
+        landing: u?._landing || false,
       }, getEffectiveMaxAccess(u));
       u._lastContent = String(output);
 
@@ -1856,6 +1873,7 @@ async function onCb(q, env) {
           const { url: wgUrl } = await saveToClipAndTrack(String(wgOut), getEffectiveTtl(u), env, uid, {
             preview: 'WireGuard × ' + wg.length + ' (Clash Meta)', nodeCount: wg.length, source: 'wg',
             burn: u?._burn || false,
+            landing: u?._landing || false,
           }, getEffectiveMaxAccess(u));
           extraUrls.push({ text: '⚡ WireGuard', url: wgUrl });
         }
@@ -1866,6 +1884,7 @@ async function onCb(q, env) {
         const { url: gostUrl } = await saveToClipAndTrack(u._gostInput, getEffectiveTtl(u), env, uid, {
           preview: 'Gost Tunnel × ' + u._gostCount, nodeCount: u._gostCount, source: 'gost',
           burn: u?._burn || false,
+          landing: u?._landing || false,
         }, getEffectiveMaxAccess(u));
         extraUrls.push({ text: '🔄 Gost', url: gostUrl });
       }
@@ -1932,19 +1951,102 @@ export default {
       }
     }
 
-    // API: 短链读取（支持 阅后即焚 / 独立IP按次 / 伪装流量）
+    // API: 链接状态查询（落地页使用）
+    if (path.startsWith('/api/link-status/')) {
+      const id = path.replace('/api/link-status/', '');
+      const raw = await env.KV.get('share_' + id, { type: 'json' });
+      if (!raw) {
+        return new Response(JSON.stringify({ alive: false }), { headers: { 'Content-Type': 'application/json', ...cors } });
+      }
+      const consumed = raw.consumed || false;
+      const accessedIPs = Array.isArray(raw.accessedIPs) ? raw.accessedIPs : [];
+      const nodeCount = raw.nodeCount || 0;
+      return new Response(JSON.stringify({
+        alive: !consumed,
+        consumed,
+        nodeCount,
+        maxAccess: raw.maxAccess || 0,
+        accessCount: accessedIPs.length,
+        ttl: raw.ttl || 0,
+        createdAt: raw._createdAt || 0,
+      }), { headers: { 'Content-Type': 'application/json', ...cors } });
+    }
+
+    // API: 短链读取（支持 落地页/阅后即焚/独立IP按次/伪装流量）
     if (path.startsWith('/share/')) {
-      const id = path.replace('/share/', '');
+      const id = path.replace('/share/', '').replace(/\?raw.*$/, '');
+      const isRaw = url.searchParams.has('raw');
       const raw = await env.KV.get('share_' + id, { type: 'json' });
       if (!raw) {
         return Response.redirect('https://www.google.com', 302);
       }
+      const teaming = raw.landing || false;
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
       const burn = raw.burn || false;
-      const maxIPs = raw.maxAccess || 0;          // maxAccess = 独立 IP 上限
+      const maxIPs = raw.maxAccess || 0;
       const accessedIPs = Array.isArray(raw.accessedIPs) ? raw.accessedIPs : [];
+      const ttl = raw.ttl || 0;
 
-      // 阅后即焚：首次访问即销毁（不写回）
+      // ===== 落地页模式（landing + 非 ?raw 请求） =====
+      if (teaming && !isRaw) {
+        let consumed = false;
+
+        // 阅后即焚：标记 consumed 但不删 KV
+        if (burn) {
+          consumed = true;
+          ctx.waitUntil(env.KV.put('share_' + id,
+            JSON.stringify({ ...raw, consumed: true }), { expirationTtl: 120 }
+          ).catch(() => {}));
+        }
+
+        // 独立 IP 上限
+        if (!consumed && maxIPs > 0 && accessedIPs.length >= maxIPs) {
+          consumed = true;
+          ctx.waitUntil(env.KV.put('share_' + id,
+            JSON.stringify({ ...raw, consumed: true }), { expirationTtl: 120 }
+          ).catch(() => {}));
+        }
+
+        // 新 IP 计数（还没消耗才记）
+        if (!consumed) {
+          const isNewIP = !accessedIPs.includes(clientIP);
+          const kvOpts = ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {};
+          if (isNewIP || maxIPs > 0) {
+            ctx.waitUntil(env.KV.put('share_' + id,
+              JSON.stringify({ ...raw, accessedIPs: isNewIP ? [...accessedIPs, clientIP] : accessedIPs }),
+              kvOpts
+            ).catch(() => {}));
+          }
+        }
+
+        // 获取落地页 HTML（从 GitHub 拉取，KV 缓存 24h）
+        let html = await env.KV.get('_landing_html');
+        if (!html) {
+          try {
+            const ghResp = await fetch(
+              'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/index.html'
+            );
+            if (ghResp.ok) {
+              html = await ghResp.text();
+              await env.KV.put('_landing_html', html, { expirationTtl: 86400 });
+            }
+          } catch {}
+        }
+        if (!html) {
+          // 兜底：如果拉取失败，返回原始文本
+          const headers = { 'Content-Type': 'text/plain; charset=utf-8' };
+          if (raw.subInfo) headers['Subscription-Userinfo'] =
+            `upload=${raw.subInfo.up}; download=${raw.subInfo.down}; total=${raw.subInfo.total}; expire=${raw.subInfo.expire}`;
+          return new Response(raw.text, { headers });
+        }
+
+        // 替换占位符
+        html = html.replace(/__ID__/g, id).replace(/__STATUS__/g, consumed ? 'consumed' : 'alive');
+        return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      }
+
+      // ===== 非落地页模式（或 ?raw 请求）= 原始行为 =====
+      // 阅后即焚：首次访问即销毁
       if (burn) {
         ctx.waitUntil(env.KV.delete('share_' + id).catch(() => {}));
         const headers = { 'Content-Type': 'text/plain; charset=utf-8' };
@@ -1953,15 +2055,14 @@ export default {
         return new Response(raw.text, { headers });
       }
 
-      // 独立 IP 上限：只看不同 IP 数量
+      // 独立 IP 上限
       if (maxIPs > 0 && accessedIPs.length >= maxIPs) {
         ctx.waitUntil(env.KV.delete('share_' + id).catch(() => {}));
         return Response.redirect('https://www.google.com', 302);
       }
 
-      // 新 IP 才加入列表（同 IP 反复刷新不占次数）
+      // 新 IP 才加入列表
       const isNewIP = !accessedIPs.includes(clientIP);
-      const ttl = raw.ttl || 0;
       const kvOpts = ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {};
       if (isNewIP || maxIPs > 0) {
         ctx.waitUntil(env.KV.put('share_' + id,
