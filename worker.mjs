@@ -2022,10 +2022,10 @@ export default {
         // 获取落地页 HTML（从 GitHub 拉取，KV 缓存 24h）
         let html = await env.KV.get('_landing_html');
         if (!html) {
+          const LANDING_HTML_URL = env.LANDING_HTML_URL ||
+            'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/index.html';
           try {
-            const ghResp = await fetch(
-              'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/index.html'
-            );
+            const ghResp = await fetch(LANDING_HTML_URL);
             if (ghResp.ok) {
               html = await ghResp.text();
               await env.KV.put('_landing_html', html, { expirationTtl: 86400 });
