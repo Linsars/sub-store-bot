@@ -2019,7 +2019,8 @@ export default {
         }
 
         // 获取落地页 HTML（从 GitHub 拉取，KV 缓存 24h）
-        let html = await env.KV.get('_landing_html');
+        // 从 KV 读缓存的落地页 HTML（含版本号，改版时递增）
+        let html = await env.KV.get('_landing_v1');
         if (!html) {
           const LANDING_HTML_URL = env.LANDING_HTML_URL ||
             'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/index.html';
@@ -2027,7 +2028,7 @@ export default {
             const ghResp = await fetch(LANDING_HTML_URL);
             if (ghResp.ok) {
               html = await ghResp.text();
-              await env.KV.put('_landing_html', html, { expirationTtl: 86400 });
+              await env.KV.put('_landing_v1', html, { expirationTtl: 86400 });
             }
           } catch {}
         }
