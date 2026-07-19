@@ -197,23 +197,21 @@ function showCopied() {
   }, 2000);
 }
 
-// Background matrix rain (subtle)
+// Background binary stream (01/pulse)
 function bgMatrix() {
-  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()_+-=[]{}|;:,.<>?/~';
+  const cols = 40;
   const el = document.createElement('div');
-  el.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;pointer-events:none;overflow:hidden;opacity:.04';
-  const p = document.createElement('pre');
-  p.style.cssText = 'font-size:.5em;line-height:1.1;color:#0f0';
-  el.appendChild(p);
-  document.body.appendChild(el);
-  setInterval(() => {
-    let t = '';
-    for (let i = 0; i < 60; i++) {
-      for (let j = 0; j < 40; j++) t += chars[Math.floor(Math.random() * chars.length)];
-      t += '\n';
-    }
-    p.textContent = t;
-  }, 150);
+  el.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;pointer-events:none;overflow:hidden;opacity:.03';
+  for (let c = 0; c < cols; c++) {
+    const col = document.createElement('div');
+    col.style.cssText = 'position:absolute;top:0;left:'+(c*100/cols)+'%;width:'+(100/cols)+'%;animation:matrix '+(10+Math.random()*6)+'s linear infinite;animation-delay:-'+(Math.random()*20)+'s';
+    let txt = '';
+    for (let r = 0; r < 20; r++) txt += (Math.random()>0.5?'0 ':'1 ') + (Math.random()>0.5?'1':'0') + '  ' + (Math.random()>0.5?'0':'0') + ' ' + (Math.random()>0.5?'1':'1') + '\n';
+    col.textContent = txt;
+    col.style.cssText += ';font-size:.3em;line-height:2.4;color:#0f0;font-family:monospace;white-space:pre;text-align:center';
+    el.appendChild(col);
+  }
+  document.body.prepend(el);
 }
 
 // ====== 主逻辑 ======

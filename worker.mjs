@@ -1850,7 +1850,7 @@ async function onCb(q, env) {
       });
     }
 
-    await tg('editMessageText', env.BOT_TOKEN, {
+    tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid, message_id: mid,
       text: '\u{1F504} \u8F6C\u6362\u4E2D... (' + fmtLabel + ')', parse_mode: 'HTML',
     });
@@ -1898,17 +1898,16 @@ async function onCb(q, env) {
       let resText = '\u2705 <b>\u8F6C\u6362\u5B8C\u6210</b>\n\n\u{1F4CA} ' + u._lastProxies.length + ' \u8282\u70B9 \u2192 <b>' + fmtLabel + '</b>\n\n\u{1F517} <code>' + clipUrl + '</code>\n';
       for (const e of extraUrls) resText += '\n' + e.text + '\n<code>' + e.url + '</code>\n';
       resText += '\n\n\u23F1 ' + ttlT + accT;
-      await tg('editMessageText', env.BOT_TOKEN, {
-        chat_id: cid, message_id: mid,
+      await tg('sendMessage', env.BOT_TOKEN, {
+        chat_id: cid,
         text: resText, parse_mode: 'HTML',
         reply_markup: multiResultKb(clipUrl, extraUrls),
-      });
+      }).catch(() => {});
     } catch (e) {
       const preview = String(output).length > 300 ? String(output).slice(0, 300) + '...' : String(output);
-      await tg('editMessageText', env.BOT_TOKEN, {
+      tg('sendMessage', env.BOT_TOKEN, {
         chat_id: cid,
-        message_id: mid,
-        text: '\u{1F504} <b>' + fmtLabel + '</b>\n\n<code>' + escapeHTML(preview) + '</code>',
+        text: '\u274C \u9519\u8BEF: ' + escapeHTML(e.message || e.toString()) + '\n\n<code>' + escapeHTML(preview) + '</code>',
         parse_mode: 'HTML',
         reply_markup: mainKb(),
       });
@@ -1992,8 +1991,8 @@ export default {
         let consumed = false;
 
         // 阅后即焚：标记 consumed 但不删 KV
+        // 注意：落地页模式下不设本地 consumed，让用户先看到真链
         if (burn) {
-          consumed = true;
           ctx.waitUntil(env.KV.put('share_' + id,
             JSON.stringify({ ...raw, consumed: true }), { expirationTtl: 120 }
           ).catch(() => {}));
