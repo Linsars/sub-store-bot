@@ -34,15 +34,8 @@ async function bundle() {
       bundle: true, write: false, format: 'esm', platform: 'neutral', target: 'es2022',
       minify: true, treeShaking: true,
       define: { 'process.env.NODE_ENV': '"production"' },
-      alias: {
-        '@': path.join(BUILD, 'src'),
-        'buffer': path.join(BUILD, 'src/buffer.js'),
-        'crypto': path.join(BUILD, 'src/buffer.js'),
-        'path': path.join(BUILD, 'src/buffer.js'),
-        'stream': path.join(BUILD, 'src/buffer.js'),
-        'os': path.join(BUILD, 'src/buffer.js'),
-        'fs': path.join(BUILD, 'src/buffer.js'),
-      },
+      alias: { '@': path.join(BUILD, 'src'), 'buffer': path.join(BUILD, 'src/buffer.js') },
+      nodePaths: [path.join(ROOT, 'node_modules')],
     });
     let c = r.outputFiles[0].text;
     if (!c.includes('process.env'))
