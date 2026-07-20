@@ -2,9 +2,11 @@
  * Sub-Store Bot — Telegram 剪贴板 + 订阅转换
  * 
  * 依赖:
- *   - proxy-utils.js (Sub-Store 引擎)
+ *   - proxy-utils.esm.js (Sub-Store 引擎 — 由 sync-proxy-utils.yml 从 sub-store-org/Sub-Store 同步构建)
  *   - Cloudflare Workers KV — 短链存储
  *   - BOT_TOKEN — Telegram Bot Token
+ * 
+ * 引擎版本: 同步自 sub-store-org/Sub-Store，通过 tools/proxy-utils-src/ 构建
  * 
  * 部署格式: ES Module Worker
  * 需要 CF 兼容性标志: nodejs_compat
@@ -266,6 +268,58 @@ function getState(uid) {
     stateMap.set(uid, { _uid: uid, _regionCache: {} });
   }
   return stateMap.get(uid);
+}
+
+// ==================== 用户配置持久化（KV 存储） ====================
+
+async function loadUserConfig(uid, env) {
+  try {
+    const raw = await env.KV.get('cfgu:' + uid, { type: 'json' });
+    return raw || {};
+  } catch { return {}; }
+}
+
+async function saveUserConfig(uid, env, state) {
+  const cfg = {};
+  // 只持久化用户可配置的选项，不持久化会话临时数据
+  if (state._burn !== undefined) cfg._burn = state._burn;
+  if (state._landing !== undefined) cfg._landing = state._landing;
+  if (state.ttl !== undefined) cfg.ttl = state.ttl;
+  if (state._accessLimit !== undefined) cfg._accessLimit = state._accessLimit;
+  if (state._convTtl !== undefined) cfg._convTtl = state._convTtl;
+  await env.KV.put('cfgu:' + uid, JSON.stringify(cfg)).catch(() => {});
+}
+
+// ==================== TG 请求限流 ====================
+
+const rateLimitMap = new Map();
+
+function checkRateLimit(uid) {
+  return false; // 默认不限流，由 webhook 判断是否启用
+}
+
+function applyRateLimit(uid, allowedUsers) {
+  // 有 ALLOWED_USERS（部署者单人用）→ 不限流
+  if (allowedUsers) return false;
+  const now = Date.now();
+  const key = uid;
+  const entry = rateLimitMap.get(key);
+  if (!entry) {
+    rateLimitMap.set(key, { count: 1, start: now });
+    if (rateLimitMap.size > 1000) {
+      const first = rateLimitMap.keys().next().value;
+      rateLimitMap.delete(first);
+    }
+    return false;
+  }
+  if (now - entry.start > 30000) {
+    // 超过 30 秒窗口 → 重置
+    entry.count = 1;
+    entry.start = now;
+    return false;
+  }
+  entry.count++;
+  return entry.count > 5; // 30 秒内超过 5 次 → 限流
 }
 
 // ==================== 订阅拉取（多 UA 轮询，支持用户自定义） ====================
@@ -1621,6 +1675,7 @@ async function onCb(q, env) {
   if (d.startsWith('ttl_set:')) {
     const ttlVal = parseInt(d.split(':')[1]);
     u.ttl = ttlVal;
+    saveUserConfig(uid, env, u);
     u._lastTtlSet = Date.now();
     const ttlLabel = ttlVal === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttlVal < 3600 ? Math.round(ttlVal / 60) + '\u5206\u949F' : Math.round(ttlVal / 3600) + '\u5C0F\u65F6';
     return tg('editMessageText', env.BOT_TOKEN, {
@@ -1647,6 +1702,7 @@ async function onCb(q, env) {
   if (d.startsWith('acc_set:')) {
     const accVal = parseInt(d.split(':')[1]);
     u._accessLimit = accVal;
+    saveUserConfig(uid, env, u);
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid, message_id: mid,
       text: '\u2705 \u5DF2\u8BBE\u7F6E\u9ED8\u8BA4\u8BBF\u95EE\u6B21\u6570: ' + (accVal === 0 ? '\u4E0D\u9650' : accVal + ' IP'),
@@ -1659,6 +1715,7 @@ async function onCb(q, env) {
 
   if (d === 'conv_toggle_burn') {
     u._burn = !u._burn;
+    saveUserConfig(uid, env, u);
     const formats = u._isGost && (!u._lastProxies || u._lastProxies.length === 0)
       ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
     return tg('editMessageReplyMarkup', env.BOT_TOKEN, {
@@ -1669,6 +1726,7 @@ async function onCb(q, env) {
 
   if (d === 'conv_toggle_landing') {
     u._landing = !u._landing;
+    saveUserConfig(uid, env, u);
     const formats = u._isGost && (!u._lastProxies || u._lastProxies.length === 0)
       ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
     return tg('editMessageReplyMarkup', env.BOT_TOKEN, {
@@ -1724,6 +1782,7 @@ async function onCb(q, env) {
   if (d.startsWith('conv_ttl_set:')) {
     const ttlVal = parseInt(d.split(':')[1]);
     u._convTtl = ttlVal;
+    saveUserConfig(uid, env, u);
     const isGost = u._isGost && (!u._lastProxies || u._lastProxies.length === 0);
     const formats = isGost ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
     return tg('editMessageText', env.BOT_TOKEN, {
@@ -1749,6 +1808,7 @@ async function onCb(q, env) {
   if (d.startsWith('conv_acc_set:')) {
     const accVal = parseInt(d.split(':')[1]);
     u._accessLimit = accVal;
+    saveUserConfig(uid, env, u);
     const isGost = u._isGost && (!u._lastProxies || u._lastProxies.length === 0);
     const formats = isGost ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
     return tg('editMessageText', env.BOT_TOKEN, {
@@ -2049,13 +2109,24 @@ export default {
         if (!html) {
           const LANDING_HTML_URL = env.LANDING_HTML_URL ||
             'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/index.html';
+          // SSRF 防护：只允许从 GitHub 拉取落地页
+          const allowedHosts = ['raw.githubusercontent.com', 'github.com', 'github.githubassets.com'];
+          let urlOk = false;
           try {
-            const ghResp = await fetch(LANDING_HTML_URL);
-            if (ghResp.ok) {
-              html = await ghResp.text();
-              await env.KV.put('_landing_v1', html, { expirationTtl: 86400 });
-            }
+            const u = new URL(LANDING_HTML_URL);
+            urlOk = allowedHosts.includes(u.hostname);
           } catch {}
+          if (!urlOk) {
+            html = '<html><body><h1>Invalid landing page URL</h1></body></html>';
+          } else {
+            try {
+              const ghResp = await fetch(LANDING_HTML_URL);
+              if (ghResp.ok) {
+                html = await ghResp.text();
+                await env.KV.put('_landing_v1', html, { expirationTtl: 86400 });
+              }
+            } catch {}
+          }
         }
         if (!html) {
           // 兜底：如果拉取失败，返回原始文本
@@ -2116,8 +2187,39 @@ export default {
       ctx.waitUntil(
         (async () => {
           try {
-            if (body.message) await onMsg(body.message, env);
-            else if (body.callback_query) await onCb(body.callback_query, env);
+            if (body.message) {
+              const uid = String(body.message.from?.id || '');
+              if (applyRateLimit(uid, env.ALLOWED_USERS)) {
+                await tg('sendMessage', env.BOT_TOKEN, {
+                  chat_id: String(body.message.chat?.id || uid),
+                  text: '\u26A0\uFE0F \u8BF7\u52FF\u9891\u7E41\u8BF7\u6C42\uFF0C\u6BCF 30 \u79D2\u6700\u591A 5 \u6B21',
+                });
+                return;
+              }
+              // 加载持久化配置到 stateMap
+              const cfg = await loadUserConfig(uid, env);
+              if (Object.keys(cfg).length > 0) {
+                const s = getState(uid);
+                Object.assign(s, cfg);
+              }
+              await onMsg(body.message, env);
+            } else if (body.callback_query) {
+              const uid = String(body.callback_query.from?.id || '');
+              if (applyRateLimit(uid, env.ALLOWED_USERS)) {
+                await tg('answerCallbackQuery', env.BOT_TOKEN, {
+                  callback_query_id: body.callback_query.id,
+                  text: '\u26A0\uFE0F \u8BF7\u52FF\u9891\u7E41\u64CD\u4F5C',
+                });
+                return;
+              }
+              // 加载持久化配置到 stateMap
+              const cfg = await loadUserConfig(uid, env);
+              if (Object.keys(cfg).length > 0) {
+                const s = getState(uid);
+                Object.assign(s, cfg);
+              }
+              await onCb(body.callback_query, env);
+            }
           } catch (e) {
             await tg('sendMessage', env.BOT_TOKEN, {
               chat_id: String(body.message?.from?.id || body.callback_query?.from?.id || ''),
