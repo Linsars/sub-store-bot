@@ -34,8 +34,8 @@ async function bundle() {
       bundle: true, write: false, format: 'esm', platform: 'node', target: 'es2022',
       minify: true, treeShaking: true,
       define: { 'process.env.NODE_ENV': '"production"' },
-      alias: { '@': path.join(BUILD, 'src') },
-      external: ['buffer'],
+      alias: { '@': path.join(BUILD, 'src'), 'buffer': path.join(BUILD, 'src/buffer.js') },
+      external: [],
     });
     let c = r.outputFiles[0].text;
     if (!c.includes('const process'))
