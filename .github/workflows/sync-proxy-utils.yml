@@ -45,13 +45,7 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upload built bundle as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: proxy-utils-bundle
-          path: proxy-utils.esm.js
-
-      - name: Commit updated bundle
+      - name: Commit and annotate
         if: steps.changed.outputs == 'true'
         run: |
           git config user.name "github-actions[bot]"
@@ -59,3 +53,9 @@ jobs:
           git add proxy-utils.esm.js tools/proxy-utils-src/src/
           git commit -m "chore: sync Sub-Store engine [skip ci]"
           git push
+          echo "::notice title=Engine Update::proxy-utils.esm.js 已更新并推送"
+
+      - name: No change notice
+        if: steps.changed.outputs == 'false'
+        run: |
+          echo "::notice title=Engine Update::Sub-Store 引擎已是最新，无变化"
