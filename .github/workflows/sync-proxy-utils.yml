@@ -1,0 +1,55 @@
+name: Sync Sub-Store Engine
+
+on:
+  schedule:
+    - cron: "0 6 * * 0"   # 每周日早6点
+  workflow_dispatch:        # 也可手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install build deps
+        run: |
+          cd tools/proxy-utils-src
+          npm install
+
+      - name: Sync parsers/preprocessors/producers from upstream
+        run: |
+          cd tools/proxy-utils-src
+          node sync-proxy-utils.js
+
+      - name: Precompile PEG grammars & build bundle
+        run: |
+          cd tools/proxy-utils-src
+          node build-proxy-utils.js
+
+      - name: Check if proxy-utils.esm.js changed
+        id: changed
+        run: |
+          if git diff --name-only | grep -q 'proxy-utils.esm.js'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit updated bundle
+        if: steps.changed.outputs == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add proxy-utils.esm.js tools/proxy-utils-src/src/
+          git commit -m "chore: sync Sub-Store engine [skip ci]"
+          git push
