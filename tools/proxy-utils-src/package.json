@@ -9,6 +9,7 @@
     "rebuild": "npm run sync && npm run build"
   },
   "dependencies": {
+    "esbuild": "^0.27.3",
     "@rollup/plugin-commonjs": "^25.0.8",
     "@rollup/plugin-json": "^6.1.0",
     "@rollup/plugin-node-resolve": "^15.3.1",

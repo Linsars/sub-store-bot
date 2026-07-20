@@ -1,152 +1,70 @@
 #!/usr/bin/env node
-/**
- * 将 Sub-Store proxy-utils 源码打包成 substorebot 可用的 proxy-utils.esm.js
- */
-const fs = require('node:fs');
-const path = require('node:path');
-const peggy = require('peggy');
-
-const ROOT = __dirname;
-const SRC = path.join(ROOT, 'src');
-const BUILD = path.join(ROOT, '.build');
-const PEGGY_DIR = path.join(BUILD, 'src/core/proxy-utils/parsers/peggy');
-const GENERATED_DIR = path.join(PEGGY_DIR, 'generated');
-const PROJECT_ROOT = path.resolve(ROOT, '..');
-const OUTPUT = path.join(PROJECT_ROOT, '..', 'proxy-utils.esm.js');
-
-function ensureDir(dirPath) {
-    fs.mkdirSync(dirPath, { recursive: true });
+const fs = require('fs'), path = require('path'), peggy = require('peggy');
+const ROOT = __dirname, SRC = path.join(ROOT, 'src');
+const BUILD = path.join(ROOT, '.build'), OUTPUT = path.join(ROOT, '..', '..', 'proxy-utils.esm.js');
+const PG = path.join(BUILD, 'src/core/proxy-utils/parsers/peggy');
+const GD = path.join(PG, 'generated');
+function md(p) { fs.mkdirSync(p, { recursive: true }); }
+function clean() {
+  fs.rmSync(BUILD, { recursive: true, force: true }); md(BUILD);
+  fs.cpSync(SRC, path.join(BUILD, 'src'), { recursive: true });
 }
-
-function cleanBuild() {
-    fs.rmSync(BUILD, { recursive: true, force: true });
-    ensureDir(BUILD);
-    fs.cpSync(SRC, path.join(BUILD, 'src'), { recursive: true });
+function compilePeg() {
+  md(GD);
+  const files = fs.readdirSync(PG).filter(f => f.endsWith('.js') && fs.readFileSync(path.join(PG, f), 'utf8').includes('String.raw`'));
+  for (const fn of files) {
+    const s = fs.readFileSync(path.join(PG, fn), 'utf8');
+    const m = s.match(/String\.raw`([\s\S]*?)`;/);
+    if (!m) { console.log('skip', fn); continue; }
+    const g = require('peggy').generate(m[1], { output: 'source', format: 'es' });
+    const o = path.join(GD, fn.replace('.js','')+'.js');
+    fs.writeFileSync(o, '// auto-gen\n' + g + '\nlet cp=null;export default function gf(){if(!cp)cp=peg$parse;gf.parse=peg$parse;return cp;}\n');
+  }
+  let idx = fs.readFileSync(path.join(BUILD, 'src/core/proxy-utils/parsers/index.js'), 'utf8');
+  for (const fn of files) idx = idx.replaceAll('./peggy/'+fn.replace('.js',''), './peggy/generated/'+fn.replace('.js',''));
+  fs.writeFileSync(path.join(BUILD, 'src/core/proxy-utils/parsers/index.js'), idx);
 }
-
-function extractGrammar(source) {
-    const startMarker = 'String.raw`';
-    const startIdx = source.indexOf(startMarker);
-    if (startIdx === -1) return null;
-    const grammarStart = startIdx + startMarker.length;
-    let i = grammarStart;
-    while (i < source.length) {
-        if (source[i] === '\\') {
-            i += 2;
-            continue;
-        }
-        if (source[i] === '`') {
-            return source.substring(grammarStart, i);
-        }
-        i++;
-    }
-    return null;
-}
-
-function compilePeggy() {
-    ensureDir(GENERATED_DIR);
-    const jsFiles = fs.readdirSync(PEGGY_DIR)
-        .filter((f) => f.endsWith('.js') && fs.readFileSync(path.join(PEGGY_DIR, f), 'utf-8').includes('String.raw`'))
-        .sort();
-
-    console.log('Pre-compiling Peggy grammars...');
-    for (const fileName of jsFiles) {
-        const sourcePath = path.join(PEGGY_DIR, fileName);
-        const baseName = path.parse(fileName).name;
-        const outputPath = path.join(GENERATED_DIR, `${baseName}.js`);
-
-        const source = fs.readFileSync(sourcePath, 'utf-8');
-        const grammar = extractGrammar(source);
-        if (!grammar) {
-            throw new Error(`Could not extract grammar from ${fileName}`);
-        }
-        const parserSource = peggy.generate(grammar, { output: 'source', format: 'es' });
-        fs.writeFileSync(
-            outputPath,
-            `// Auto-generated from ${fileName} - DO NOT EDIT\n${parserSource}\nlet cachedParser = null;\nexport default function getParser() {\n    if (!cachedParser) {\n        cachedParser = peg$parse;\n        cachedParser.parse = peg$parse;\n    }\n    return cachedParser;\n}\n`,
-            'utf-8',
-        );
-        console.log(`  Generated: ${path.relative(ROOT, outputPath)}`);
-    }
-
-    // Rewrite parsers/index.js imports
-    const parsersIndexPath = path.join(BUILD, 'src/core/proxy-utils/parsers/index.js');
-    let indexSource = fs.readFileSync(parsersIndexPath, 'utf-8');
-    for (const fileName of jsFiles) {
-        const baseName = path.parse(fileName).name;
-        indexSource = indexSource.replaceAll(`./peggy/${baseName}`, `./peggy/generated/${baseName}`);
-    }
-    fs.writeFileSync(parsersIndexPath, indexSource, 'utf-8');
-    console.log(`  Rewired: ${path.relative(ROOT, parsersIndexPath)}`);
-}
-
-function aliasPlugin() {
-    return {
-        name: 'alias',
-        resolveId(source, importer) {
-            if (source === 'buffer') {
-                const bufferPath = path.join(BUILD, 'src', 'buffer.js');
-                if (fs.existsSync(bufferPath)) return bufferPath;
-            }
-            if (source.startsWith('@/')) {
-                const base = path.join(BUILD, 'src', source.slice(2));
-                if (fs.existsSync(base) && fs.statSync(base).isDirectory()) {
-                    return path.join(base, 'index.js');
-                }
-                const withJs = base.endsWith('.js') ? base : `${base}.js`;
-                if (fs.existsSync(withJs)) {
-                    return withJs;
-                }
-            }
-            return null;
-        },
-    };
-}
-
 async function bundle() {
-    console.log('Starting bundle...');
-    const rollup = require('rollup');
-    const { nodeResolve } = require('@rollup/plugin-node-resolve');
-    const commonjs = require('@rollup/plugin-commonjs');
-    const json = require('@rollup/plugin-json');
-    console.log('Rollup modules loaded');
-
-    const entryPoint = path.join(BUILD, 'src/core/proxy-utils/index.js');
-    const bundle = await rollup.rollup({
-        input: entryPoint,
-        plugins: [
-            aliasPlugin(),
-            json(),
-            commonjs({
-                ignoreTryCatch: true,
-            }),
-            nodeResolve({
-                preferBuiltins: false,
-                browser: true,
-            }),
-        ],
+  let esb;
+  try { esb = require('esbuild'); } catch {}
+  if (esb && typeof esb.build === 'function') {
+    console.log('Using esbuild');
+    const r = await esb.build({
+      entryPoints: [path.join(BUILD, 'src/core/proxy-utils/index.js')],
+      bundle: true, write: false, format: 'esm', platform: 'neutral', target: 'es2022',
+      minify: true, treeShaking: true,
+      define: { 'process.env.NODE_ENV': '"production"' },
+      alias: { '@': path.join(BUILD, 'src') },
     });
-
-    const { output } = await bundle.generate({
-        format: 'esm',
-        exports: 'named',
+    let c = r.outputFiles[0].text;
+    if (!c.includes('const process'))
+      c = 'const process={env:{NODE_ENV:"production"},nextTick:cb=>cb(),platform:"",version:""};\n' + c;
+    fs.writeFileSync(OUTPUT, c);
+    console.log('Output:', OUTPUT, 'size:', (fs.statSync(OUTPUT).size/1024).toFixed(1)+'KB');
+  } else {
+    console.log('esbuild unavailable, using rollup');
+    const rollup = (await import('rollup')).rollup;
+    const {nodeResolve} = await import('@rollup/plugin-node-resolve');
+    const commonjs = await import('@rollup/plugin-commonjs');
+    const json = await import('@rollup/plugin-json');
+    const b = await rollup({
+      input: path.join(BUILD, 'src/core/proxy-utils/index.js'),
+      plugins: [
+        { name: 'a', resolveId(src) {
+          if (!src.startsWith('@/')) return;
+          const b2 = path.join(BUILD, 'src', src.slice(2));
+          if (fs.existsSync(b2) && fs.statSync(b2).isDirectory()) return path.join(b2, 'index.js');
+          const j = b2.endsWith('.js')?b2:b2+'.js';
+          if (fs.existsSync(j)) return j;
+        }},
+        json.default(), commonjs.default({ ignoreTryCatch: true }),
+        nodeResolve({ preferBuiltins: false, browser: true }),
+      ],
     });
-
-    let code = output[0].code;
-
-    // CF Worker 没有 process，补一个最小 shim
-    code = `/* Sub-Store proxy-utils for substorebot | built from sub-store-org/Sub-Store master */\nconst process = { env: { NODE_ENV: 'production' }, nextTick: (cb) => cb(), platform: '', version: '' };\n${code}`;
-
-    fs.writeFileSync(OUTPUT, code, 'utf-8');
-    console.log(`\nOutput: ${OUTPUT}`);
-    console.log(`Size: ${(fs.statSync(OUTPUT).size / 1024).toFixed(2)} KB`);
+    const {output} = await b.generate({ format: 'esm', exports: 'named' });
+    let c = '/* proxy-utils */\nconst process={env:{NODE_ENV:"production"},nextTick:cb=>cb(),platform:"",version:""};\n' + output[0].code;
+    fs.writeFileSync(OUTPUT, c);
+    console.log('Output:', OUTPUT, 'size:', (fs.statSync(OUTPUT).size/1024).toFixed(1)+'KB');
+  }
 }
-
-(async () => {
-    cleanBuild();
-    compilePeggy();
-    await bundle();
-})().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+(async()=>{clean();compilePeg();await bundle();})().catch(e=>{console.error(e);process.exit(1);});
