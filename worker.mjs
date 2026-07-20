@@ -30,12 +30,19 @@ function superscriptNum(n) {
 }
 
 async function tg(method, token, body) {
-  const r = await fetch('https://api.telegram.org/bot' + token + '/' + method, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return r.json();
+  try {
+    const r = await fetch('https://api.telegram.org/bot' + token + '/' + method, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    if (ct.includes('json')) return await r.json();
+    // TG API 返回非 JSON（如 502 HTML 页）→ 静默失败
+    return { ok: false, error_code: r.status, description: await r.text().catch(() => '') };
+  } catch (e) {
+    return { ok: false, error_code: 0, description: e.message };
+  }
 }
 
 function escapeHTML(s) {
@@ -50,7 +57,7 @@ async function atomicTrackIP(env, id, clientIP, maxIPs, ttl) {
     try {
       data = await env.KV.getWithMetadata(key, { type: 'json' });
     } catch { return { consumed: false, isNewIP: false, error: 'kv_read' }; }
-    if (!data.value && !data.value === null) return { consumed: false, isNewIP: false, error: 'not_found' };
+    if (!data || !data.value) return { consumed: false, isNewIP: false, error: 'not_found' };
     const raw = data.value || {};
     if (raw.consumed) return { consumed: true, isNewIP: false };
     const ips = Array.isArray(raw.accessedIPs) ? raw.accessedIPs : [];
@@ -282,11 +289,11 @@ async function loadUserConfig(uid, env) {
 async function saveUserConfig(uid, env, state) {
   const cfg = {};
   // 只持久化用户可配置的选项，不持久化会话临时数据
-  if (state._burn !== undefined) cfg._burn = state._burn;
-  if (state._landing !== undefined) cfg._landing = state._landing;
-  if (state.ttl !== undefined) cfg.ttl = state.ttl;
-  if (state._accessLimit !== undefined) cfg._accessLimit = state._accessLimit;
-  if (state._convTtl !== undefined) cfg._convTtl = state._convTtl;
+  if (state._burn != null) cfg._burn = state._burn;
+  if (state._landing != null) cfg._landing = state._landing;
+  if (state.ttl != null) cfg.ttl = state.ttl;
+  if (state._accessLimit != null) cfg._accessLimit = state._accessLimit;
+  if (state._convTtl != null) cfg._convTtl = state._convTtl;
   await env.KV.put('cfgu:' + uid, JSON.stringify(cfg)).catch(() => {});
 }
 
@@ -294,14 +301,17 @@ async function saveUserConfig(uid, env, state) {
 
 const rateLimitMap = new Map();
 
-function checkRateLimit(uid) {
-  return false; // 默认不限流，由 webhook 判断是否启用
-}
-
 function applyRateLimit(uid, allowedUsers) {
   // 有 ALLOWED_USERS（部署者单人用）→ 不限流
   if (allowedUsers) return false;
   const now = Date.now();
+  // 定期清理过期条目（每 100 次请求清理一次）
+  if (rateLimitMap.size > 0 && rateLimitMap.size % 100 === 0) {
+    const cutoff = now - 60000; // 保留 60 秒内的记录
+    for (const [k, v] of rateLimitMap) {
+      if (now - v.start > 60000) rateLimitMap.delete(k);
+    }
+  }
   const key = uid;
   const entry = rateLimitMap.get(key);
   if (!entry) {
@@ -1529,8 +1539,8 @@ async function onCb(q, env) {
             : [{ text: '\u23F1 \u4FEE\u6539\u6642\u6548', callback_data: 'mod_ttl_' + l.id }];
           const rows = [
             [{ text: '\u{1F4CB} \u590D\u5236\u94FE\u63A5', copy_text: { text: clipUrl } },
-             { text: '\u{1F517} \u6253\u5F00', url: clipUrl },
-             { text: '\u{1F517} \u6253\u5F00', url: clipUrl }],
+             { text: '\u{1F517} \u4E3B\u94FE', url: clipUrl },
+             { text: '\u{1F4E4} \u5206\u4EAB', url: 'https://t.me/share/url?url=' + encodeURIComponent(clipUrl) }],
             ttlRow,
           ];
           if (!isExpired) rows.push([{ text: '\u{1F4CA} \u4FEE\u6539\u6B21\u6570', callback_data: 'mod_acc_' + l.id }]);
@@ -1616,8 +1626,8 @@ async function onCb(q, env) {
             : [{ text: '\u23F1 \u4FEE\u6539\u6642\u6548', callback_data: 'mod_ttl_' + l.id }];
           const rows = [
             [{ text: '\u{1F4CB} \u590D\u5236\u94FE\u63A5', copy_text: { text: clipUrl } },
-             { text: '\u{1F517} \u6253\u5F00', url: clipUrl },
-             { text: '\u{1F517} \u6253\u5F00', url: clipUrl }],
+             { text: '\u{1F517} \u4E3B\u94FE', url: clipUrl },
+             { text: '\u{1F4E4} \u5206\u4EAB', url: 'https://t.me/share/url?url=' + encodeURIComponent(clipUrl) }],
             ttlRow,
           ];
           if (!isExpired) rows.push([{ text: '\u{1F4CA} \u4FEE\u6539\u6B21\u6570', callback_data: 'mod_acc_' + l.id }]);
