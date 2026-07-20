@@ -57,7 +57,8 @@ try{m['fs']={}}catch(e){}
 try{m['querystring']={}}catch(e){}
 try{m['process']=typeof process<"u"?process:{}}catch(e){}
 return function(n){return m[n]||{}};}();
-var require=__r;`;
+var require=__r;
+var module={exports:{}};`;
     c = shim + c;
     if (!c.includes('_exports ='))
       c += '\nexport const ProxyUtils = (typeof _PU_exports !== "undefined" ? _PU_exports : ((typeof module !== "undefined" && module.exports) || {})).ProxyUtils;\n';
