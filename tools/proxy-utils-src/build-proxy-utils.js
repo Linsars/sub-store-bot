@@ -31,42 +31,13 @@ async function bundle() {
     console.log('Using esbuild');
     const r = await esb.build({
       entryPoints: [path.join(BUILD, 'src/core/proxy-utils/index.js')],
-      bundle: true, write: false, format: 'iife', globalName: 'pu',
-      platform: 'node', target: 'node20',
-      minify: true, treeShaking: true,
-      define: {},
+      bundle: true, write: false, format: 'esm', platform: 'browser',
+      target: 'es2022', minify: true, treeShaking: true,
+      define: { 'process.env.NODE_ENV': '"production"' },
       alias: { '@': path.join(BUILD, 'src') },
       nodePaths: [path.join(ROOT, 'node_modules')],
     });
-    let c = r.outputFiles[0].text, shim = `// Workers require() compat shim
-const __workers_require = (function() {
-    var m = {};
-    try { m['buffer'] = { Buffer: globalThis.Buffer }; } catch(e) {}
-    try { m['path'] = { join:function(){return Array.from(arguments).join("/")}, resolve:function(){var a=Array.from(arguments);return a.join("/")}, basename:function(p){return p.split("/").pop()}, dirname:function(p){return p.split("/").slice(0,-1).join("/")}, extname:function(p){var i=p.lastIndexOf(".");return i>0?p.slice(i):""}, sep:"/" }; } catch(e) {}
-    try { m['url'] = { URL: globalThis.URL, URLSearchParams: globalThis.URLSearchParams }; } catch(e) {}
-    try { m['os'] = {}; } catch(e) {}
-    try { m['crypto'] = {}; } catch(e) {}
-    try { m['stream'] = {}; } catch(e) {}
-    try { m['util'] = {}; } catch(e) {}
-    try { m['process'] = { env:{}, cwd:function(){return"/"}, argv:[], version:"v18" }; } catch(e) {}
-    try { m['events'] = {}; } catch(e) {}
-    try { m['assert'] = {}; } catch(e) {}
-    try { m['string_decoder'] = {}; } catch(e) {}
-    try { m['fs'] = {}; } catch(e) {}
-    try { m['net'] = {}; } catch(e) {}
-    try { m['tls'] = {}; } catch(e) {}
-    try { m['http'] = {}; } catch(e) {}
-    try { m['zlib'] = {}; } catch(e) {}
-    try { m['child_process'] = {}; } catch(e) {}
-    try { m['module'] = {}; } catch(e) {}
-    return function(name) {
-        name = name.replace(/^node:/, '');
-        if (m[name]) return m[name];
-        return {};
-    };
-})();
-var require = __workers_require;
-    c = shim + c + '\nexport const ProxyUtils = (typeof pu !== "undefined" ? pu : {}).ProxyUtils;\n';
+    let c = r.outputFiles[0].text;
     fs.writeFileSync(OUTPUT, c);
     console.log('Output:', OUTPUT, 'size:', (fs.statSync(OUTPUT).size/1024).toFixed(1)+'KB');
   } else {
