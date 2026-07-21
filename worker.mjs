@@ -49,6 +49,127 @@ function escapeHTML(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ==================== Surge 格式行解析 ====================
+
+function parseSurgeLines(text) {
+  const proxies = [];
+  const nonSurgeLines = [];
+  const knownTypes = ['ss','snell','trojan','vless','vmess','hysteria2','tuic','socks5','http','https','wireguard','hysteria','juicity','anytls'];
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith('//')) continue;
+    const eqIdx = line.indexOf('=');
+    if (eqIdx === -1) { nonSurgeLines.push(rawLine); continue; }
+    const beforeEq = line.slice(0, eqIdx).trim();
+    const afterEq = line.slice(eqIdx + 1).trim();
+    const parts = afterEq.split(',');
+    if (parts.length < 3) { nonSurgeLines.push(rawLine); continue; }
+    const type = parts[0].trim();
+    if (!knownTypes.includes(type.toLowerCase())) { nonSurgeLines.push(rawLine); continue; }
+    proxies.push({ name: beforeEq, type: type.toLowerCase(), server: parts[1].trim(), port: parseInt(parts[2].trim(), 10) || 0 });
+  }
+  return { proxies, nonSurgeLines };
+}
+
+function parseProxies(text) {
+  return parseProxiesWithSurge(text, false);
+}
+
+function parseProxiesWithSurge(text, skipSurge) {
+  if (!skipSurge) {
+    const { proxies: surge } = parseSurgeLines(text);
+    if (surge.length > 0) return surge;
+  }
+  try { const y = parseClashYaml(text); if (y.length > 0) return y; } catch {}
+  try { const r = ProxyUtils.parse(text); if (r && r.length > 0) return r; } catch {}
+  return [];
+}
+
+function parseClashYaml(text) {
+  const proxies = [];
+  const proxyIdx = text.indexOf('\nproxies:');
+  if (proxyIdx === -1) return proxies;
+  let remaining = text.slice(proxyIdx + 10);
+  const entries = remaining.split(/\n    - name: /);
+  for (let i = 1; i < entries.length; i++) {
+    let entry = entries[i];
+    let nameLine = entry.split('\n')[0];
+    let name = nameLine.replace(/^['"](.*)['"]$/, '$1').trim();
+    if (!name) continue;
+    const proxy = { name, type: '', server: '', port: 0 };
+    const lines = entry.split('\n');
+    for (let l = 1; l < lines.length; l++) {
+      const line = lines[l];
+      if (!line.match(/^\s{6}/) && line.includes(':') && l > 1) break;
+      const match = line.match(/^\s{4,6}(\w[\w-]*?):\s*(.*?)\s*$/);
+      if (!match) continue;
+      const k = match[1];
+      let v = match[2].trim().replace(/^['"](.*)['"]$/, '$1');
+      switch (k) {
+        case 'type': proxy.type = v.toLowerCase(); break;
+        case 'server': proxy.server = v; break;
+        case 'port': proxy.port = parseInt(v, 10) || 0; break;
+        case 'password': proxy.password = v; break;
+        case 'cipher': proxy.cipher = v; break;
+        case 'uuid': proxy.uuid = v; break;
+        case 'sni': proxy.sni = v; break;
+        case 'network': proxy.network = v; break;
+        case 'tls': proxy.tls = v === 'true'; break;
+        case 'flow': proxy.flow = v; break;
+        case 'alpn': proxy.alpn = typeof v === 'string' ? v.split(',').map(s => s.trim().replace(/^['"](.*)['"]$/, '$1')) : v; break;
+        case 'client-fingerprint': proxy['client-fingerprint'] = v; break;
+        case 'servername': proxy.servername = v; break;
+        case 'skip-cert-verify': proxy['skip-cert-verify'] = v === 'true' || v === true; break;
+        case 'udp': proxy.udp = v === 'true' || v === true; break;
+        default: proxy[k] = v; break;
+      }
+    }
+    if (proxy.type) proxies.push(proxy);
+  }
+  return proxies;
+}
+
+// ==================== 本地订阅收集系统 ====================
+
+function collectionText(collection) {
+  const items = collection?.items || [];
+  const mode = collection?.mode || 'file';
+  let lines = ['\u{1F4C1} ' + (mode === 'url' ? '远程订阅收集' : '本地订阅') + '  \u26A0\uFE0F 数据临时有效，请尽快处理', ''];
+  lines.push('\u{1F4CA} 已收集: ' + items.length + ' \u6761');
+  if (items.length === 0) {
+    lines.push('');
+    lines.push(mode === 'url' ? '请发送订阅链接' : '请发送节点文件或粘贴订阅内容');
+  } else {
+    lines.push('');
+    items.forEach((item, i) => {
+      const prefix = (i + 1) + '.\u3000';
+      if (item.name) {
+        const sizeStr = item.size > 1024 ? Math.round(item.size / 1024) + 'KB' : item.size + 'B';
+        lines.push(prefix + '\u{1F4C4} ' + item.name + ' (' + sizeStr + ')');
+      } else if (item.url) {
+        lines.push(prefix + '\u{1F310} ' + item.url.slice(0, 80) + (item.url.length > 80 ? '...' : ''));
+      } else {
+        const preview = item.content.slice(0, 80).replace(/\n/g, ' ').replace(/</g, '&lt;');
+        lines.push(prefix + '\u{1F4DD} "' + preview + '..."');
+      }
+    });
+    lines.push('');
+    lines.push('完成后点击\u300C\u2705 \u5F00\u59CB\u5904\u7406\u300D');
+    lines.push('');
+    lines.push('\u26A0\uFE0F 数据临时有效，回收后需重新收集');
+  }
+  return lines.join('\n');
+}
+
+function collectionKb(hasItems) {
+  const buttons = [];
+  if (hasItems) {
+    buttons.push({ text: '\u2705 开始处理', callback_data: 'collection_process' });
+  }
+  buttons.push({ text: '\u{1F519} 返回', callback_data: 'menu' });
+  return { inline_keyboard: [buttons] };
+}
+
 // Atomic IP counting + access limit (PR #1, burn handled at route level)
 async function atomicTrackIP(env, id, clientIP, maxIPs, ttl) {
   const key = 'share_' + id;
@@ -759,10 +880,43 @@ async function onMsg(msg, env) {
 
   if (!content) return;
 
+  // 收集模式（本地订阅/远程订阅）
+  if (u._collectMode) {
+    if (!u._collected) u._collected = [];
+    if (u._collectMode === 'file') {
+      u._collected.push({ name: msg.document?.file_name || '', size: msg.document?.file_size || content.length, content });
+    } else if (u._collectMode === 'url' && msg.text) {
+      const urls = msg.text.trim().split(/[\s,;\n]+/).filter(s => /^https?:\/\//i.test(s));
+      for (const url of urls) {
+        u._collected.push({ url, content: '', size: 0 });
+      }
+      if (urls.length === 0) return;
+    } else {
+      return;
+    }
+    const targetCid = u.promptCid || cid;
+    const colMsg = collectionText({ items: u._collected, mode: u._collectMode });
+    await tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: targetCid, message_id: u.promptMid, text: colMsg, parse_mode: 'HTML',
+      reply_markup: collectionKb(u._collected.length > 0),
+    }).catch(async () => {
+      const sent = await tg('sendMessage', env.BOT_TOKEN, { chat_id: cid, text: colMsg, parse_mode: 'HTML', reply_markup: collectionKb(u._collected.length > 0) });
+      if (sent?.result?.message_id) {
+        u.promptCid = cid; u.promptMid = sent.result.message_id;
+      }
+    });
+    return;
+  }
+
   const ttl = u.ttl !== undefined ? u.ttl : 0;
 
   // 远程订阅：拉取内容
   let subText = content;
+  // 提取 HTML &lt;pre&gt; 标签内的订阅内容（有些订阅源用网页包装 YAML/URI）
+  const preMatch = subText.match(/<pre[^>]*>([\s\S]*?)(?:<\/pre>|$)/i);
+  if (preMatch) {
+    subText = preMatch[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+  }
   let gostLines, proxies;
   if (isRemote) {
     const inputUrls = content.split(/\n/).map(s => s.trim()).filter(s => s.startsWith('http://') || s.startsWith('https://'));
@@ -1053,16 +1207,6 @@ async function onMsg(msg, env) {
   const currentWg = proxies ? proxies.filter(p => p.type === 'wireguard') : [];
   const currentStd = proxies ? proxies.filter(p => p.type !== 'wireguard') : [];
 
-  // 与内存累计合并（同实例内多文件追加）
-  if (!isRemote) {
-    if (u._accProxies && u._accProxies.length > 0) {
-      currentStd.unshift(...u._accProxies);
-    }
-    if (u._accWgProxies && u._accWgProxies.length > 0) {
-      currentWg.unshift(...u._accWgProxies);
-    }
-  }
-
   // dedup
   const mergedStd = deduplicateProxies(currentStd);
   const mergedWg = deduplicateProxies(currentWg);
@@ -1073,23 +1217,18 @@ async function onMsg(msg, env) {
   const hasWg = mergedWg.length > 0;
   const hasGost = mergedGost.length > 0;
 
-  // 存回内存累计
-  u._accProxies = mergedStd;
-  u._accWgProxies = mergedWg;
-  u._accGostInput = mergedGost;
+  // 存回 lastProxies（格式转换用）
+  u._lastProxies = mergedStd;
+  u._lastWgProxies = mergedWg;
+  u._lastSubInput = subText;
+  u._lastRawContent = content;
+  u._lastProxiesRaw = proxies;
   // 累计原始文本（用于原生格式输出）
-  if (content) {
-    u._accRawText = u._accRawText ? u._accRawText + '\n' + content : content;
-  }
+  u._accRawText = content;
+  u._accGostInput = mergedGost;
 
-  // 远程 → 清累计
-  if (isRemote) {
-    u._accProxies = null;
-    u._accWgProxies = null;
-    u._accGostInput = null;
-    u._accRawText = null;
-    u._fmtMsg = null;
-  }
+  // 远程 → 清 fmtMsg
+  if (isRemote) u._fmtMsg = null;
 
   // 每次新输入清内存残留统计
   u._lastStats = null;
@@ -1221,6 +1360,7 @@ async function onCb(q, env) {
   if (d === 'menu') return cb_menu(env, uid, cid, mid, u, d, q);
   if (d === 'input_url') return cb_input_url(env, uid, cid, mid, u, d, q);
   if (d === 'input_file') return cb_input_file(env, uid, cid, mid, u, d, q);
+  if (d === 'collection_process') return cb_collection_process(env, uid, cid, mid, u, d, q);
   if (d === 'ua_menu') return cb_ua_menu(env, uid, cid, mid, u, d, q);
   if (d.startsWith('ua_toggle:')) return cb_ua_toggle(env, uid, cid, mid, u, d, q);
   if (d.startsWith('ua_del:')) return cb_ua_del(env, uid, cid, mid, u, d, q);
@@ -1254,6 +1394,11 @@ async function onCb(q, env) {
 // ==================== onCb 路由处理函数 ====================
 
 async function cb_menu(env, uid, cid, mid, u, d, q) {
+  // 返回主页 → 清理所有收集/临时状态
+  u._collected = null;
+  u._collectMode = null;
+  u._fmtMsg = null; u._lastProxies = null; u._lastWgProxies = null; u._lastSubInput = null;
+  u._accRawText = null; u._accGostInput = null;
   return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
@@ -1264,26 +1409,96 @@ async function cb_menu(env, uid, cid, mid, u, d, q) {
 }
 
 async function cb_input_url(env, uid, cid, mid, u, d, q) {
-  u.state = 'URL';
+  u._collectMode = 'url';
     u.promptCid = cid;
     u.promptMid = mid;
-    await env.KV.put('prompt:' + uid, JSON.stringify({ cid, mid }));
+    u._collected = [];
     return tg('editMessageText', env.BOT_TOKEN, {
-      chat_id: cid, message_id: mid,
-      text: '\u{1F310} \u8BF7\u53D1\u9001\u8BA2\u9605\u94FE\u63A5',
-      parse_mode: 'HTML', reply_markup: backKb(),
+      chat_id: cid, message_id: mid, text: collectionText({ items: [], mode: 'url' }), parse_mode: 'HTML',
+      reply_markup: collectionKb(false),
     });
 }
 
 async function cb_input_file(env, uid, cid, mid, u, d, q) {
-  u.state = 'FILE';
+  u._collectMode = 'file';
     u.promptCid = cid;
     u.promptMid = mid;
-    await env.KV.put('prompt:' + uid, JSON.stringify({ cid, mid }));
+    u._collected = []; // 重置内存收集
     return tg('editMessageText', env.BOT_TOKEN, {
-      chat_id: cid, message_id: mid,
-      text: '\u{1F4CE} \u8BF7\u53D1\u9001\u8282\u70B9\u6587\u4EF6\u6216\u7C98\u8D34\u5185\u5BB9',
-      parse_mode: 'HTML', reply_markup: backKb(),
+      chat_id: cid, message_id: mid, text: collectionText({ items: [] }), parse_mode: 'HTML',
+      reply_markup: collectionKb(false),
+    });
+}
+
+async function cb_collection_process(env, uid, cid, mid, u, d, q) {
+    const mode = u._collectMode;
+    const items = u._collected || [];
+    u._collectMode = null;
+    u._collected = null;
+    if (items.length === 0) {
+      return tg('editMessageText', env.BOT_TOKEN, {
+        chat_id: cid, message_id: mid, text: '\u274C 没有收集到任何内容', parse_mode: 'HTML',
+        reply_markup: backKb(),
+      });
+    }
+    if (mode === 'url') {
+      // ===== 远程订阅：构造消息体丢给 onMsg 原流程 =====
+      const urlText = items.filter(i => i.url).map(i => i.url).join('\n');
+      if (!urlText) {
+        return tg('sendMessage', env.BOT_TOKEN, { chat_id: cid, text: '\u274C 没有有效的订阅链接', reply_markup: backKb() });
+      }
+      const fakeMsg = { chat: { id: cid }, from: { id: parseInt(uid) }, text: urlText };
+      // 先回复 callback query，再走 onMsg 流程
+      // 由于 u 是同一个 getState 对象，_collectMode 已清空不会再次拦截
+      return onMsg(fakeMsg, env);
+    }
+    // ===== 本地文件/文本：继续原有解析流程 =====
+    let proxies = [];
+    for (const item of items) {
+      let parsed = parseProxies(item.content);
+      if (parsed && parsed.length > 0) proxies.push(...parsed);
+    }
+    if (proxies.length === 0) {
+      // 回退：从原始文本提取 Surge 行
+      const surgeLines = [];
+      for (const item of items) {
+        const sr = parseSurgeLines(item.content);
+        if (sr.proxies.length > 0) surgeLines.push(...sr.proxies);
+      }
+      if (surgeLines.length > 0) proxies = surgeLines;
+    }
+    // 清理 KV
+    env.KV.delete('collect:' + uid).catch(() => {});
+    if (!proxies || proxies.length === 0) {
+      return tg('sendMessage', env.BOT_TOKEN, {
+        chat_id: cid, text: '\u274C 无法从收集的内容中解析出任何节点', reply_markup: backKb(),
+      });
+    }
+    // 切换到标准处理流程：拆分 WG/普通
+    const currentWg = proxies.filter(p => p.type === 'wireguard');
+    const currentStd = proxies.filter(p => p.type !== 'wireguard');
+    // 去重
+    const mergedStd = deduplicateProxies(currentStd);
+    const mergedWg = deduplicateProxies(currentWg);
+    u._lastProxies = mergedStd;
+    u._lastWgProxies = mergedWg;
+    u._fmtMsg = null;
+    // 显示格式选择
+    if (mergedStd.length === 0 && mergedWg.length === 0) {
+      return tg('sendMessage', env.BOT_TOKEN, {
+        chat_id: cid, text: '\u274C 解析后没有标准节点', reply_markup: backKb(),
+      });
+    }
+    const dedup = (currentStd.length + currentWg.length) - (mergedStd.length + mergedWg.length);
+    const types = {};
+    for (const p of mergedStd) types[p.type] = (types[p.type] || 0) + 1;
+    const typeStr = Object.entries(types).sort((a,b) => b[1]-a[1]).map(([t,c]) => t + ': ' + c).join(', ');
+    const text = '\u{1F504} \u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9\n\n\u{1F4CA} \u8282\u70B9\u6570: ' + mergedStd.length + '\u3001\u53BB\u91CD: ' + dedup +
+      '\n\n\u{1F4CD} ' + typeStr + '\n\n\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:';
+    const formats = mergedStd.some(p => ['ss','ssr','trojan'].includes(p.type)) ? FORMAT_OPTIONS.filter(f => ['egern','stash'].includes(f.id) ? false : true) : FORMAT_OPTIONS;
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid, message_id: mid, text, parse_mode: 'HTML',
+      reply_markup: fmtKb(formats, u._convTtl, u.ttl, u),
     });
 }
 
@@ -1867,6 +2082,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
         const effTtl = getEffectiveTtl(u);
         const effAcc = getEffectiveMaxAccess(u);
         u._convTtl = null;
+        env.KV.delete('collect:' + uid).catch(() => {});
         u._convAccessLimit = null;
         const ttlT = effTtl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : effTtl < 3600 ? Math.round(effTtl / 60) + '\u5206\u949F' : Math.round(effTtl / 3600) + '\u5C0F\u65F6';
         const accT = effAcc === 0 ? '' : '\n\u{1F4CA} ' + effAcc + ' IP';
@@ -1998,6 +2214,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       const effTtl2 = getEffectiveTtl(u);
       const effAcc = getEffectiveMaxAccess(u);
       u._convTtl = null;
+      env.KV.delete('collect:' + uid).catch(() => {});
       u._convAccessLimit = null;
       const ttlT = effTtl2 === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : effTtl2 < 3600 ? Math.round(effTtl2 / 60) + '\u5206\u949F' : Math.round(effTtl2 / 3600) + '\u5C0F\u65F6';
       const accT = effAcc === 0 ? '' : '\n\u{1F4CA} ' + effAcc + ' IP';
