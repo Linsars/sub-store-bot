@@ -37,10 +37,22 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 
 ### 同步更新推送
 
-由 [@CrzThursday_VMe50](https://github.com/CrzThursday-VMe50) 投稿的自动化工作流，每日自动同步上游并部署。
+#### 方式一：手动 fork 同步（仅同步代码）
+
+1. 打开你的 GitHub 仓库
+2. **Add file → Create new file**
+3. 路径填 `.github/workflows/fork-sync.yml` → 把 [_workflows](docs/_workflows/fork-sync.yml) 的内容粘贴进你新建的 yml 文件 → **Commit**
+4. 去 **Settings → Secrets and variables → Actions → New repository secret** 添加：
+   - `CF_ACCOUNT_ID` — 你的 CF 账户 ID
+   - `CF_API_TOKEN` — CF API Token
+5. 去 **Actions** 页面 → 点 **Fork Sync** → **Run workflow** → 等小圆点变绿
+
+#### 方式二：自动同步 + 部署（[@CrzThursday_VMe50](https://github.com/CrzThursday-VMe50) 投稿）
+
+每日自动同步上游代码并部署，无需手动操作。所有变量全部放 **Git Secrets**，不要放 Variable。
 
 1. 把 [fork-sync-deploy.yml](fork-sync-deploy.yml) 复制到你仓库的 `.github/workflows/` 目录
-2. 去 **Settings → Secrets and variables → Actions → New repository secret**，添加以下变量（**全部放 Secret，不要放 Variable**）：
+2. 去 **Settings → Secrets and variables → Actions → New repository secret**，添加以下变量（**全部放 Secret**）：
    - `CF_ACCOUNT_ID` — 你的 CF 账户 ID
    - `CF_API_TOKEN` — CF API Token
    - `BOT_TOKEN` — Telegram Bot Token
