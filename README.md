@@ -9,14 +9,10 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 | 类别 | 功能 | 说明 |
 |------|------|------|
 | **输入** | 远程订阅 / 本地订阅 / 多订阅合并 | 发 URL 或文件，7 种 UA 轮询拉取（可自定义），同对话多条自动去重合并 |
-| **输出** | 13 种格式 + 双链 | Clash Meta、URI、JSON、V2Ray、sing-box、Surfboard、QX、Shadowrocket、Surge、Loon、Stash、Egern、Base64；WG 节点和 Gost 节点独立侧链输出 |
+| **输出** | 13 种格式 + Snell + 双链 | Clash Meta、URI、JSON、V2Ray、sing-box、Surfboard、QX、Shadowrocket、Surge、Loon、Stash、Egern、Base64；Snell 节点完整支持（Surge 格式 parser 增强）；WG 节点和 Gost 节点独立侧链输出 |
 | **处理** | 去同名上标 + 智能去重 | 同名节点自动上标（²³…），基于 server:port:type:uuid:sni:path:network 特征去重 |
 | **短链** | 有效期 / 阅后即焚 / 梅开二度 / 管理 | IP 独立计数访问限制，过期/焚毁自动销毁；落地页反向代理可自定义 HTML |
-| **安全** | SSRF 防护 / TG 限流 / Webhook 校验 | LANDING_HTML_URL 仅允许 GitHub 域名；无白名单时自动限流 30s/5 次；WEBHOOK_SECRET 请求头鉴权 |
-| **持久化** | 配置落 KV | 阅后即焚、落地页开关、默认时效/访问次数写入 KV，升级不丢 |
-| **UA 轮询** | 启用/禁用/自定义 | 7 个默认 UA 可选，支持添加自定义 UA |
-| **反代** | PROXY_URL | 绕过 CF-to-CF 订阅拉取拦截 |
-| **调试** | DEBUG_TOKEN | 带鉴权的 debug-fetch 端点 |
+| **安全** | SSRF 防护 / TG 限流 / 配置持久化 / 反代 / 调试 | SSRF 防护（LANDING_HTML_URL 仅 GitHub）；TG 限流 30s/5 次；Webhook 校验；配置落 KV 升级不丢；PROXY_URL 绕过 CF 拦截；DEBUG_TOKEN 鉴权端点 |
 
 ---
 
@@ -52,28 +48,6 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
    - Name： `CF_API_TOKEN`
    - Secret： 你的CF操作令牌。CF首页点左上角三杠最下面 **管理账户** → **账户API令牌** 创建一个
 5. 去 **Actions** 页面 → 轻点 **Allworkers** → 点 **Fork Sync** → 猛击 **Run workflow** → 小圆点变绿自动部署激活
-
-## 梅开二度 / 阅后即焚
-
-短链支持三种防护模式，通过 Telegram Bot 的转换面板开关：
-
-| 模式 | 设置 | 假链（落地页） | 真链（?raw） | 假链详情 |
-|------|------|----------------|--------------|----------|
-| **梅开二度+阅后即焚** | `landing:true burn:true` | 独立 TTL/IP 上限 | 首次访问即失效 | 显示真链存活状态 |
-| **仅梅开二度** | `landing:true burn:false` | 独立 TTL/IP 上限 | 正常可用 | 显示真链存活状态 |
-| **仅阅后即焚** | `landing:false burn:true` | — | 首次访问即失效 | — |
-
-- **假链** = 落地页 URL（`/share/{id}`），有独立的 IP 计数和 TTL
-- **真链** = 原始内容 URL（`/share/{id}?raw`），阅后即焚模式下首次访问后清空 KV 内容
-- **三振规则**：失效的落地页被访问 3 次后彻底删除 KV
-
-## Snell 节点支持
-
-引擎的 Surge PEG parser 不支持 Snell 格式，本项目通过增强的 `parseSurgeLines` 绕过：
-
-- 解析 Surge 格式 `key=value` 对（含引号内逗号）
-- 提取 `version`、`psk`、`obfs`、`obfs-host`、`tfo`、`udp-relay`、`ip-version` 等字段
-- Egern、Surge、Clash Meta 等格式均可正确输出完整 Snell 节点
 
 ## 环境变量
 
