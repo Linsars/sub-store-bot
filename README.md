@@ -8,11 +8,11 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 
 | 类别 | 功能 | 说明 |
 |------|------|------|
-| **输入** | 远程订阅 / 本地订阅 / 多订阅合并 | 发 URL 或文件，7 种 UA 轮询拉取（可自定义），同对话多条自动去重合并 |
+| **输入** | 远程订阅 / 本地订阅 / 多订阅合并 / 反代 | 发 URL 或文件，7 种 UA 轮询拉取（可自定义），PROXY_URL 绕过 CF 拉取拦截，同对话多条自动去重合并 |
 | **输出** | 13 种格式 + Snell + 双链 | Clash Meta、URI、JSON、V2Ray、sing-box、Surfboard、QX、Shadowrocket、Surge、Loon、Stash、Egern、Base64；Snell 节点完整支持（Surge 格式 parser 增强）；WG 节点和 Gost 节点独立侧链输出 |
 | **处理** | 去同名上标 + 智能去重 | 同名节点自动上标（²³…），基于 server:port:type:uuid:sni:path:network 特征去重 |
 | **短链** | 有效期 / 阅后即焚 / 梅开二度 / 管理 | IP 独立计数访问限制，过期/焚毁自动销毁；落地页反向代理可自定义 HTML |
-| **安全** | SSRF 防护 / TG 限流 / 配置持久化 / 反代 / 调试 | SSRF 防护（LANDING_HTML_URL 仅 GitHub）；TG 限流 30s/5 次；Webhook 校验；配置落 KV 升级不丢；PROXY_URL 绕过 CF 拦截；DEBUG_TOKEN 鉴权端点 |
+| **安全** | SSRF 防护 / TG 限流 / 配置持久化 / 调试 | SSRF 防护（LANDING_HTML_URL 仅 GitHub）；TG 限流 30s/5 次；Webhook 校验；配置落 KV 升级不丢；DEBUG_TOKEN 鉴权端点 |
 
 ---
 
