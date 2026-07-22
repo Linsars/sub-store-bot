@@ -1161,7 +1161,33 @@ async function onMsg(msg, env) {
     });
   }
 
-
+  // 备注模式 — 只改 preview（列表名字），不碰短链内容
+  if (u.state && u.state.startsWith('RENAME_')) {
+    const linkId = u.state.replace('RENAME_', '');
+    const remark = (msg.text || '').trim();
+    u.state = null;
+    if (remark === '/cancel' || !remark) {
+      return tg('sendMessage', env.BOT_TOKEN, {
+        chat_id: cid, text: '\u2716 \u5DF2\u53D6\u6D88',
+        reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u5217\u8868', callback_data: 'my_links_0' }]] },
+      });
+    }
+    const links = await getUserLinks(uid, env);
+    const l = links.find(x => x.id === linkId);
+    if (!l) {
+      return tg('sendMessage', env.BOT_TOKEN, {
+        chat_id: cid, text: '\u274C \u77ED\u94FE\u5DF2\u4E0D\u5B58\u5728',
+        reply_markup: mainKb(),
+      });
+    }
+    l.preview = remark;
+    await env.KV.put('ulinks:' + uid, JSON.stringify(links));
+    return tg('sendMessage', env.BOT_TOKEN, {
+      chat_id: cid,
+      text: '\u2705 \u5DF2\u66F4\u65B0\u5217\u8868\u540D\u79F0\uFF1A' + escapeHTML(remark),
+      reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u5217\u8868', callback_data: 'my_links_0' }]] },
+    });
+  }
 
   // 获取输入内容
   let content = '';
@@ -1296,6 +1322,16 @@ async function onCb(q, env) {
   if (d.startsWith('do_del_')) return cb_do_del(env, uid, cid, mid, u, d, q);
   if (d.startsWith('mod_ttl_')) return cb_mod_ttl(env, uid, cid, mid, u, d, q);
   if (d.startsWith('chg_ttl_')) return cb_chg_ttl(env, uid, cid, mid, u, d, q);
+  if (d.startsWith('rename_')) {
+    const linkId = d.replace('rename_', '');
+    u.state = 'RENAME_' + linkId;
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid, message_id: mid,
+      text: '\u{1F4DD} <b>\u4FEE\u6539\u5217\u8868\u540D\u79F0</b>\n\n\u53D1\u9001\u65B0\u540D\u79F0\uFF0C\u6216\u53D1\u9001 /cancel \u53D6\u6D88\u3002',
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [[{ text: '\u2716 \u53D6\u6D88', callback_data: 'link_' + linkId }]] },
+    });
+  }
   if (d.startsWith('mod_acc_')) return cb_mod_acc(env, uid, cid, mid, u, d, q);
   if (d.startsWith('chg_acc_')) return cb_chg_acc(env, uid, cid, mid, u, d, q);
   if (d === 'limit_menu') return cb_limit_menu(env, uid, cid, mid, u, d, q);
@@ -1612,7 +1648,10 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
       : [{ text: '\u{1F4CA} \u4FEE\u6539\u6B21\u6570', callback_data: 'mod_acc_' + l.id }];
 
     const rows = [
-      [{ text: '\u{1F4E4} \u5206\u4EAB', url: 'https://t.me/share/url?url=' + encodeURIComponent(clipUrl) }],
+      [
+        { text: '\u{1F4E4} \u5206\u4EAB', url: 'https://t.me/share/url?url=' + encodeURIComponent(clipUrl) },
+        { text: '\u{1F4DD} \u5907\u6CE8', callback_data: 'rename_' + l.id },
+      ],
       [
         ttlRow[0],
         ...(accRow.length ? [accRow[0]] : []),
