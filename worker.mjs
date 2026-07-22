@@ -62,11 +62,42 @@ function parseSurgeLines(text) {
     if (eqIdx === -1) { nonSurgeLines.push(rawLine); continue; }
     const beforeEq = line.slice(0, eqIdx).trim();
     const afterEq = line.slice(eqIdx + 1).trim();
-    const parts = afterEq.split(',');
+    // 按逗号分割，但要处理引号内的逗号（如 psk="abc,def"）
+    const parts = [];
+    let buf = '', inQuote = false;
+    for (let i = 0; i < afterEq.length; i++) {
+      const ch = afterEq[i];
+      if (ch === '"') { inQuote = !inQuote; buf += ch; }
+      else if (ch === ',' && !inQuote) { parts.push(buf); buf = ''; }
+      else { buf += ch; }
+    }
+    if (buf) parts.push(buf);
     if (parts.length < 3) { nonSurgeLines.push(rawLine); continue; }
-    const type = parts[0].trim();
-    if (!knownTypes.includes(type.toLowerCase())) { nonSurgeLines.push(rawLine); continue; }
-    proxies.push({ name: beforeEq, type: type.toLowerCase(), server: parts[1].trim(), port: parseInt(parts[2].trim(), 10) || 0 });
+    const type = parts[0].trim().toLowerCase();
+    if (!knownTypes.includes(type)) { nonSurgeLines.push(rawLine); continue; }
+    const proxy = { name: beforeEq, type, server: parts[1].trim(), port: parseInt(parts[2].trim(), 10) || 0 };
+    // 解析剩余 key=value 对
+    for (let i = 3; i < parts.length; i++) {
+      const kv = parts[i].trim();
+      const kidx = kv.indexOf('=');
+      if (kidx === -1) continue;
+      const k = kv.slice(0, kidx).trim();
+      let v = kv.slice(kidx + 1).trim();
+      // 去引号
+      if (v.length >= 2 && v[0] === '"' && v[v.length - 1] === '"') v = v.slice(1, -1);
+      if (k === 'version') proxy.version = parseInt(v, 10) || 0;
+      else if (k === 'psk') proxy.psk = v;
+      else if (k === 'obfs') proxy.obfs = v;
+      else if (k === 'obfs-host') proxy['obfs-host'] = v;
+      else if (k === 'obfs-uri') proxy['obfs-uri'] = v;
+      else if (k === 'tfo') proxy.tfo = v === 'true' || v === true;
+      else if (k === 'udp-relay') proxy.udp = v === 'true' || v === true;
+      else if (k === 'ip-version') proxy['ip-version'] = v;
+      else if (k === 'reuse') proxy.reuse = v === 'true' || v === true;
+      else if (k === 'interface') proxy.interface = v;
+      else proxy[k] = v;
+    }
+    proxies.push(proxy);
   }
   return { proxies, nonSurgeLines };
 }
@@ -262,9 +293,6 @@ const FORMAT_OPTIONS = [
   { id: 'b64', label: 'Base64' },
   { id: 'native', label: '原生 YAML' },
 ];
-
-// Gost Tunnel 仅支持的格式
-const GOST_FORMATS = ['shadowrocket', 'uri'];
 
 function fmtKb(allowed, convTtl, ttlDefault, u) {
   const formats = allowed || FORMAT_OPTIONS;
@@ -801,7 +829,7 @@ async function saveToClip(text, ttl, env, maxAccess, extra = {}) {
     landing: extra.landing || false,
     nodeCount: extra.nodeCount || 0,
     _createdAt: Date.now(),
-    subInfo: extra.subInfo || null,
+
   });
   const kvOpts = {};
   if (ttl > 0) kvOpts.expirationTtl = ttl < 60 ? 60 : ttl;
@@ -837,6 +865,258 @@ function isAllowed(uid, env) {
     if (list.includes(uid)) return true;
   }
   return false;
+}
+
+// ==================== 远程订阅拉取（独立函数，供 onMsg / cb_collection_process 调用） ====================
+
+async function processRemoteUrls(urls, cid, uid, u, env) {
+  const ttl = u.ttl !== undefined ? u.ttl : 0;
+  const totalInputUrls = urls.length;
+  const uniqueUrls = [...new Set(urls)];
+
+  if (uniqueUrls.length === 0) {
+    return replyOrEdit(u, cid, env, {
+      text: '\u274C \u672A\u68C0\u6D4B\u5230\u6709\u6548\u8BA2\u9605\u94FE\u63A5',
+    });
+  }
+
+  // --- 拉取 ---
+  let allProxies = [];
+  let rawTexts = [];
+  const usedUas = [];
+  const errors = [];
+  let dupSubCount = 0;
+
+  if (uniqueUrls.length === 1) {
+    // 单 URL
+    try {
+      await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6\u8BA2\u9605...' });
+      const subResult = await fetchSub(uniqueUrls[0], uid, env);
+      const subText = subResult.text;
+      u._lastUrlCount = 1;
+      u._lastFetchUa = subResult.ua === 'proxy' ? '\u53CD\u4EE3 (Karing)' : subResult.ua;
+      // HTML <pre> 提取
+      const preMatch = subText.match(/<pre[^>]*>([\s\S]*?)(?:<\/pre>|$)/i);
+      const cleanText = preMatch
+        ? preMatch[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+        : subText;
+      let parsed = null;
+      try { parsed = ProxyUtils.parse(cleanText); } catch { parsed = null; }
+      if (parsed && parsed.length > 0) {
+        allProxies = parsed;
+        rawTexts.push(cleanText);
+        usedUas.push(uniqueUrls[0] + ' \u2192 ' + (subResult.ua === 'proxy' ? 'Karing' : subResult.ua) + ' \u2192 ' + parsed.length);
+      } else {
+        errors.push('\u2022 ' + uniqueUrls[0] + ': \u65E0\u6709\u6548\u8282\u70B9');
+      }
+    } catch (e) {
+      return replyOrEdit(u, cid, env, { text: '\u274C \u62C9\u53D6\u5931\u8D25: ' + e.message });
+    }
+  } else {
+    // 多 URL
+    await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 ' + uniqueUrls.length + ' \u4E2A\u8BA2\u9605...' });
+
+    if (uniqueUrls.length >= 4) {
+      // 4+ URL：首选首个 UA 拉取，拉不出再换备用
+      const allUas = await getUaList(uid, env);
+      const primary = allUas[0] || FETCH_UAS[0];
+      const fallbacks = allUas.slice(1);
+      const contentSeen = new Map();
+      for (const url of uniqueUrls) {
+        let text = '';
+        let usedUa = primary;
+        try {
+          text = await Promise.race([
+            fetch(url, { headers: { 'User-Agent': primary } }).then(r => r.text()),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+          ]);
+        } catch { text = ''; }
+        if (!text || text.length < 50 || text.includes('\u8BBF\u95EE\u88AB\u62D2\u7EDD') || text.includes('\u4E0D\u652F\u6301\u6D4F\u89C8\u5668') || text.includes('<html') || text.includes('<HTML') || text.includes('<!DOC')) {
+          text = '';
+          for (const fb of fallbacks) {
+            try {
+              text = await Promise.race([
+                fetch(url, { headers: { 'User-Agent': fb } }).then(r => r.text()),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+              ]);
+              if (text && text.length >= 50 && !text.includes('<html') && !text.includes('<!DOC')) { usedUa = fb; break; }
+            } catch { continue; }
+          }
+        }
+        if (!text || text.length < 50) {
+          usedUas.push(url + ' \u2192 \u274C \u65E0\u6570\u636E');
+          errors.push('\u2022 ' + url + ': \u65E0\u6570\u636E');
+          continue;
+        }
+        const contentKey = text.slice(0, 200).replace(/\d+/g, '');
+        if (contentSeen.has(contentKey)) {
+          const first = contentSeen.get(contentKey);
+          usedUas[first.index] = first.entry + '\n    \u26A0\uFE0F \u91CD\u590D: ' + url;
+          dupSubCount++;
+          continue;
+        }
+        const entryIndex = usedUas.length;
+        rawTexts.push(text);
+        let parsed = null;
+        try { parsed = ProxyUtils.parse(text); } catch { parsed = null; }
+        if (parsed && parsed.length > 0) {
+          allProxies = allProxies.concat(parsed);
+          const types = {};
+          for (const p of parsed) types[p.type] = (types[p.type] || 0) + 1;
+          const ts = Object.entries(types).map(([k, v]) => k + ':' + v).join(', ');
+          const entryText = url + ' \u2192 ' + usedUa + ' \u2192 ' + parsed.length + ' (' + ts + ')';
+          contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
+          usedUas.push(entryText);
+        } else {
+          const entryText = url + ' \u2192 ' + usedUa + ' \u2192 0';
+          contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
+          usedUas.push(entryText);
+          errors.push('\u2022 ' + url + ': \u65E0\u6709\u6548\u8282\u70B9');
+        }
+      }
+    } else {
+      // 2-3 URL：每个 URL 用全 UA 轮询，取最优
+      const contentSeen = new Map();
+      for (const url of uniqueUrls) {
+        const uaList = await getUaList(uid, env);
+        if (uaList.length === 0) uaList.push(FETCH_UAS[0]);
+        let bestText = '', bestUa = '', bestCount = 0, bestParsed = null;
+        const seen = new Set();
+        const BATCH_SIZE = 5;
+        for (let batchStart = 0; batchStart < uaList.length; batchStart += BATCH_SIZE) {
+          const batch = uaList.slice(batchStart, batchStart + BATCH_SIZE);
+          const results = await Promise.allSettled(
+            batch.map(async (ua) => {
+              try {
+                const text = await Promise.race([
+                  fetch(url, { headers: { 'User-Agent': ua } }).then(r => r.text()),
+                  new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+                ]);
+                return { text, ua };
+              } catch { return { text: '', ua }; }
+            })
+          );
+          for (const r of results) {
+            if (r.status !== 'fulfilled') continue;
+            const text = r.value.text;
+            if (!text || text.length < 50) continue;
+            if (text.includes('\u8BBF\u95EE\u88AB\u62D2\u7EDD') || text.includes('\u4E0D\u652F\u6301\u6D4F\u89C8\u5668') || text.includes('<html') || text.includes('<HTML') || text.includes('<!DOC')) continue;
+            const key = text.slice(0, 200);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            try {
+              const parsed = ProxyUtils.parse(text);
+              if ((parsed?.length || 0) > bestCount) {
+                bestCount = parsed.length;
+                bestText = text;
+                bestUa = r.value.ua;
+                bestParsed = parsed;
+              }
+            } catch {}
+          }
+        }
+        if (!bestText) {
+          usedUas.push(url + ' \u2192 \u274C \u65E0\u6570\u636E');
+          errors.push('\u2022 ' + url + ': \u65E0\u6570\u636E');
+          continue;
+        }
+        const contentKey = bestText.slice(0, 200).replace(/\d+/g, '');
+        if (contentSeen.has(contentKey)) {
+          const first = contentSeen.get(contentKey);
+          usedUas[first.index] = first.entry + '\n    \u26A0\uFE0F \u91CD\u590D: ' + url;
+          dupSubCount++;
+          continue;
+        }
+        rawTexts.push(bestText);
+        if (bestParsed && bestParsed.length > 0) {
+          allProxies = allProxies.concat(bestParsed);
+          const types = {};
+          for (const p of bestParsed) types[p.type] = (types[p.type] || 0) + 1;
+          const ts = Object.entries(types).map(([k, v]) => k + ':' + v).join(', ');
+          const entryIndex = usedUas.length;
+          const entryText = url + ' \u2192 ' + bestUa + ' \u2192 ' + bestParsed.length + ' (' + ts + ')';
+          contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
+          usedUas.push(entryText);
+        } else {
+          const entryIndex = usedUas.length;
+          const entryText = url + ' \u2192 ' + bestUa + ' \u2192 0';
+          contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
+          usedUas.push(entryText);
+          errors.push('\u2022 ' + url + ': \u65E0\u6709\u6548\u8282\u70B9');
+        }
+      }
+    }
+  }
+
+  // --- 去重 + 统计 ---
+  allProxies = deduplicateProxies(allProxies);
+
+  if (allProxies.length === 0) {
+    return replyOrEdit(u, cid, env, {
+      text: '\u274C \u6240\u6709\u8BA2\u9605\u90FD\u62C9\u53D6\u5931\u8D25:\n' + errors.join('\n'),
+    });
+  }
+
+  let report = '\u2705 \u5408\u5E76 ' + allProxies.length + ' \u4E2A\u8282\u70B9';
+  report += ' \u6765\u81EA ' + rawTexts.length + '/' + totalInputUrls + ' \u4E2A\u6E90';
+  if (errors.length > 0) report += '\n\n\u26A0\uFE0F \u5931\u8D25:\n' + errors.join('\n');
+  await replyOrEdit(u, cid, env, { text: report });
+
+  // 二次去重 + 统计
+  const totalNodes = allProxies.length;
+  const dupUrlCount = totalInputUrls - uniqueUrls.length;
+  const before = allProxies.length;
+  allProxies = deduplicateProxies(allProxies);
+  u._lastStats = {
+    totalNodes,
+    actualNodes: allProxies.length,
+    subSources: rawTexts.length + '/' + totalInputUrls,
+    dupSubs: dupSubCount,
+    dupUrls: dupUrlCount,
+    dupNodes: before - allProxies.length,
+  };
+  u._lastUrlCount = rawTexts.length + '/' + totalInputUrls;
+  u._lastFetchUa = usedUas.length > 0 ? usedUas.join('\n') : null;
+
+  // --- 设置状态 + 显示格式选择 ---
+  const mergedStd = allProxies;
+  u._lastProxies = mergedStd;
+  u._lastSubInput = rawTexts.join('\n');
+  u._lastRawContent = rawTexts.join('\n');
+  u._lastProxiesRaw = allProxies;
+  u._fmtMsg = null;
+
+  // 统计类型
+  const types = {};
+  for (const p of mergedStd) { types[p.type] = (types[p.type] || 0) + 1; }
+  let typeStr = Object.entries(types).map(([k, v]) => k + ': ' + v).join(', ');
+  const wgCount = mergedStd.filter(p => p.type === 'wireguard').length;
+  if (wgCount > 0) typeStr += '\n\u26A1 WireGuard \u00D7 ' + wgCount + ' \u2014 Surge \u4E0D\u652F\u6301\uFF0C\u5C06\u81EA\u52A8\u4EE5\u539F\u751F YAML \u5206\u94FE';
+  if (u._gostInput && u._gostCount) typeStr += '\n\u{1F504} Gost \u00D7 ' + u._gostCount + ' \u2014 \u5EFA\u8BAE\u9009 Shadowrocket';
+
+  const statsLine = u._lastStats
+    ? '\n\u{1F4CA} <b>' + u._lastStats.actualNodes + '</b> \u5B9E\u9645 (\u603B: ' + u._lastStats.totalNodes +
+      (u._lastStats.dupUrls > 0 ? ', \u53BB\u91CD\u94FE\u63A5: ' + u._lastStats.dupUrls : '') +
+      (u._lastStats.dupSubs > 0 ? ', \u91CD\u590D\u8BA2\u9605: ' + u._lastStats.dupSubs : '') +
+      (u._lastStats.dupNodes > 0 ? ', \u91CD\u590D\u8282\u70B9: ' + u._lastStats.dupNodes : '') + ')'
+    : '';
+
+  const uaInfo = u._lastFetchUa ? '\n\u{1F916} ' + escapeHTML(u._lastFetchUa) : '';
+
+  const fmtText =
+    '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
+    statsLine + '\n' +
+    '\u{1F4CD} ' + typeStr + '\n' +
+    '\n\u{1F517} ' + rawTexts.length + '/' + totalInputUrls + ' \u4E2A\u8BA2\u9605\u6E90' + uaInfo + '\n' +
+    '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:';
+
+  const sent = await replyOrEdit(u, cid, env, {
+    text: fmtText, parse_mode: 'HTML',
+    reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
+  });
+  const msgId = sent?.result?.message_id || (sent?.from_edit ? u.promptMid : null);
+  u._fmtMsg = msgId ? { cid, id: msgId } : null;
+  u._fmtText = fmtText;
 }
 
 // ==================== 消息处理 ====================
@@ -881,16 +1161,21 @@ async function onMsg(msg, env) {
     });
   }
 
-    // 获取输入内容  // 获取输入内容
+  // 获取输入内容
   let content = '';
-  let isRemote = false;
 
   if (msg.text) {
     content = msg.text.trim();
-    if (content.startsWith('http://') || content.startsWith('https://')) {
-      isRemote = true;
-    }
   } else if (msg.document) {
+    // 非收集模式 → 提示使用收集器，不下载文件
+    if (!u._collectMode) {
+      return tg('sendMessage', env.BOT_TOKEN, {
+        chat_id: cid,
+        text: '\u{1F4C4} 收到文件\n\n请使用主页的「订阅」按钮导入文件',
+        reply_markup: mainKb(),
+      });
+    }
+    // 收集模式 → 下载文件
     const f = await tg('getFile', env.BOT_TOKEN, {
       file_id: msg.document.file_id,
     });
@@ -936,437 +1221,47 @@ async function onMsg(msg, env) {
     return;
   }
 
+  // ===== 非收集模式 =====
   const ttl = u.ttl !== undefined ? u.ttl : 0;
 
-  // 远程订阅：拉取内容
-  let subText = content;
-  // 提取 HTML &lt;pre&gt; 标签内的订阅内容（有些订阅源用网页包装 YAML/URI）
-  const preMatch = subText.match(/<pre[^>]*>([\s\S]*?)(?:<\/pre>|$)/i);
-  if (preMatch) {
-    subText = preMatch[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
-  }
-  let gostLines, proxies;
-  if (isRemote) {
-    const inputUrls = content.split(/\n/).map(s => s.trim()).filter(s => s.startsWith('http://') || s.startsWith('https://'));
-    const urlDupCount = new Map();
-    for (const u of inputUrls) urlDupCount.set(u, (urlDupCount.get(u) || 0) + 1);
-    const urls = [...new Set(inputUrls)];
-    const totalInputUrls = inputUrls.length;
-
-    if (urls.length === 0) {
-      return replyOrEdit(u, cid, env, {
-        text: '\u274C \u672A\u68C0\u6D4B\u5230\u6709\u6548\u8BA2\u9605\u94FE\u63A5',
-      });
-    }
-
-    if (urls.length === 1) {
-      try {
-        await replyOrEdit(u, cid, env, {
-          text: '\u{1F504} \u6B63\u5728\u62C9\u53D6\u8BA2\u9605...',
-        });
-        const subResult = await fetchSub(urls[0], uid, env);
-        subText = subResult.text;
-        u._lastUrlCount = 1;
-        u._lastFetchUa = subResult.ua === 'proxy' ? '反代 (Karing)' : subResult.ua;
-      } catch (e) {
-        return replyOrEdit(u, cid, env, {
-          text: '\u274C \u62C9\u53D6\u5931\u8D25: ' + e.message,
-        });
-      }
-    } else {
-      await replyOrEdit(u, cid, env, {
-        text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 ' + urls.length + ' \u4E2A\u8BA2\u9605...',
-      });
-
-      // 多 URL
-      let allProxies = [];
-      let allGost = [];
-      let rawTexts = [];
-      const usedUas = [];
-      const errors = [];
-      let dupSubCount = 0;
-
-      if (urls.length >= 4) {
-        // 4 条以上：首选 Karing 单 UA 拉取，拉不出再换别的
-        const allUas = await getUaList(uid, env);
-        const primary = allUas[0] || FETCH_UAS[0];
-        const fallbacks = allUas.slice(1);
-        const contentSeen = new Map(); // contentKey → { url, index }
-        for (const u of urls) {
-          let text = '';
-          let usedUa = primary;
-          try {
-            text = await Promise.race([
-              fetch(u, { headers: { 'User-Agent': primary } }).then(r => r.text()),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
-            ]);
-          } catch { text = ''; }
-          if (!text || text.length < 50 || text.includes('访问被拒绝') || text.includes('不支持浏览器') || text.includes('<html') || text.includes('<HTML') || text.includes('<!DOC')) {
-            // 主 UA 拉不出，挨个试备用 UA
-            text = '';
-            for (const fb of fallbacks) {
-              try {
-                text = await Promise.race([
-                  fetch(u, { headers: { 'User-Agent': fb } }).then(r => r.text()),
-                  new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
-                ]);
-                if (text && text.length >= 50 && !text.includes('<html') && !text.includes('<!DOC')) {
-                  usedUa = fb;
-                  break;
-                }
-              } catch { continue; }
-            }
-          }
-          if (!text || text.length < 50) {
-            const dupNote = inputUrls.filter(x => x === u).length > 1 ? ' \u26A0\uFE0F\u91CD\u590D\u5171' + inputUrls.filter(x => x === u).length + '\u6761' : '';
-            usedUas.push(u + ' \u2192 \u274C \u65E0\u6570\u636E' + dupNote);
-            errors.push('\u2022 ' + u + ': \u65E0\u6570\u636E');
-            continue;
-          }
-          // 检查是否内容重复
-          const contentKey = text.slice(0, 200).replace(/\d+/g, '');
-          if (contentSeen.has(contentKey)) {
-            // 在第一条的显示里追加重复标记，跳过本条
-            const first = contentSeen.get(contentKey);
-            usedUas[first.index] = first.entry + '\n    \u26A0\uFE0F \u91CD\u590D: ' + u;
-            dupSubCount++;
-            continue;
-          }
-          // 记录第一条的索引，等会再追加重复标记
-          const entryIndex = usedUas.length;  // 还没 push，先记住索引
-          rawTexts.push(text);
-          const gi = isGostSocksContent(text);
-          let pt = text;
-          if (gi) {
-            const sp = splitGostLines(text);
-            allGost = allGost.concat(sp.gostLines);
-            pt = sp.otherLines;
-          }
-          let parsed = null;
-          try { parsed = ProxyUtils.parse(pt); } catch { parsed = null; }
-          if (parsed && parsed.length > 0) {
-            allProxies = allProxies.concat(parsed);
-            const types = {};
-            for (const p of parsed) types[p.type] = (types[p.type] || 0) + 1;
-            const ts = Object.entries(types).map(([k,v]) => k + ':' + v).join(', ');
-            const dupNote = inputUrls.filter(x => x === u).length > 1 ? ' \u26A0\uFE0F\u91CD\u590D\u5171' + inputUrls.filter(x => x === u).length + '\u6761' : '';
-            const entryText = u + ' \u2192 ' + usedUa + ' \u2192 ' + parsed.length + ' (' + ts + ')' + dupNote;
-            contentSeen.set(contentKey, { url: u, index: entryIndex, entry: entryText });
-            usedUas.push(entryText);
-          } else {
-            const dupNote = inputUrls.filter(x => x === u).length > 1 ? ' \u26A0\uFE0F\u91CD\u590D\u5171' + inputUrls.filter(x => x === u).length + '\u6761' : '';
-            const entryText = u + ' \u2192 ' + usedUa + ' \u2192 0' + dupNote;
-            contentSeen.set(contentKey, { url: u, index: entryIndex, entry: entryText });
-            usedUas.push(entryText);
-            errors.push('\u2022 ' + u + ': \u65E0\u6709\u6548\u8282\u70B9');
-          }
-        }
-      } else {
-        const contentSeen = new Map();
-        for (const u of urls) {
-        const uaList = await getUaList(uid, env);
-        if (uaList.length === 0) uaList.push(FETCH_UAS[0]);
-        let bestText = '';
-        let bestUa = '';
-        let bestCount = 0;
-        let bestParsed = null;
-        const seen = new Set();
-        const BATCH_SIZE = 5;
-        for (let batchStart = 0; batchStart < uaList.length; batchStart += BATCH_SIZE) {
-          const batch = uaList.slice(batchStart, batchStart + BATCH_SIZE);
-          const results = await Promise.allSettled(
-            batch.map(async (ua) => {
-              try {
-                const text = await Promise.race([
-                  fetch(u, { headers: { 'User-Agent': ua } }).then(r => r.text()),
-                  new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
-                ]);
-                return { text, ua };
-              } catch { return { text: '', ua }; }
-            })
-          );
-          for (const r of results) {
-            if (r.status !== 'fulfilled') continue;
-            const text = r.value.text;
-            if (!text || text.length < 50) continue;
-            if (text.includes('访问被拒绝') || text.includes('不支持浏览器') || text.includes('<html') || text.includes('<HTML') || text.includes('<!DOC')) continue;
-            const key = text.slice(0, 200);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            try {
-              const parsed = ProxyUtils.parse(text);
-              const count = parsed?.length || 0;
-              if (count > bestCount) {
-                bestCount = count;
-                bestText = text;
-                bestUa = r.value.ua;
-                bestParsed = parsed;
-              }
-            } catch { /* parse fail, skip */ }
-          }
-        }
-        if (!bestText) {
-          const dupNote = inputUrls.filter(x => x === u).length > 1 ? ' \u26A0\uFE0F\u91CD\u590D\u5171' + inputUrls.filter(x => x === u).length + '\u6761' : '';
-          usedUas.push(u + ' \u2192 \u274C \u65E0\u6570\u636E' + dupNote);
-          errors.push('\u2022 ' + u + ': \u65E0\u6570\u636E');
-          continue;
-        }
-        // 检查是否内容重复
-        const contentKey = bestText.slice(0, 200).replace(/\d+/g, '');
-        if (contentSeen.has(contentKey)) {
-          const first = contentSeen.get(contentKey);
-          usedUas[first.index] = first.entry + '\n    \u26A0\uFE0F \u91CD\u590D: ' + u;
-          dupSubCount++;
-          continue;
-        }
-        rawTexts.push(bestText);
-        const gi = isGostSocksContent(bestText);
-        let pt = bestText;
-        if (gi) {
-          const sp = splitGostLines(bestText);
-          allGost = allGost.concat(sp.gostLines);
-          pt = sp.otherLines;
-        }
-        // bestParsed 来自轮询阶段的解析；如有 Gost 需重新解析去掉 Gost 行
-        let parsed = bestParsed;
-        if (gi) {
-          try { parsed = ProxyUtils.parse(pt); } catch { parsed = null; }
-        }
-        if (parsed && parsed.length > 0) {
-          allProxies = allProxies.concat(parsed);
-          const types = {};
-          for (const p of parsed) types[p.type] = (types[p.type] || 0) + 1;
-          const ts = Object.entries(types).map(([k,v]) => k + ':' + v).join(', ');
-          const entryIndex = usedUas.length;
-          const dupNote = inputUrls.filter(x => x === u).length > 1 ? ' \u26A0\uFE0F\u91CD\u590D\u5171' + inputUrls.filter(x => x === u).length + '\u6761' : '';
-          const entryText = u + ' \u2192 ' + bestUa + ' \u2192 ' + parsed.length + ' (' + ts + ')' + dupNote;
-          contentSeen.set(contentKey, { url: u, index: entryIndex, entry: entryText });
-          usedUas.push(entryText);
-        } else {
-          const entryIndex = usedUas.length;
-          const dupNote = inputUrls.filter(x => x === u).length > 1 ? ' \u26A0\uFE0F\u91CD\u590D\u5171' + inputUrls.filter(x => x === u).length + '\u6761' : '';
-          const entryText = u + ' \u2192 ' + bestUa + ' \u2192 0' + dupNote;
-          contentSeen.set(contentKey, { url: u, index: entryIndex, entry: entryText });
-          usedUas.push(entryText);
-          errors.push('\u2022 ' + u + ': \u65E0\u6709\u6548\u8282\u70B9');
-        }
-      }
-      }
-
-      allProxies = deduplicateProxies(allProxies);
-
-      if (allProxies.length === 0 && allGost.length === 0) {
-        return replyOrEdit(u, cid, env, {
-          text: '\u274C \u6240\u6709\u8BA2\u9605\u90FD\u62C9\u53D6\u5931\u8D25:\n' + errors.join('\n'),
-        });
-      }
-
-      let report = '\u2705 \u5408\u5E76 ' + allProxies.length + ' \u4E2A\u8282\u70B9';
-      if (allGost.length > 0) report += ' + ' + allGost.length + ' Gost';
-      report += ' \u6765\u81EA ' + rawTexts.length + '/' + urls.length + ' \u4E2A\u6E90';
-      if (errors.length > 0) report += '\n\n\u26A0\uFE0F \u5931\u8D25:\n' + errors.join('\n');
-      await replyOrEdit(u, cid, env, { text: report });
-
-      // 直接用合并好的 proxies，跳过后面的大文本解析
-      proxies = allProxies;
-      gostLines = allGost;
-      subText = rawTexts.join('\n');
-      // 统计信息
-      const totalNodes = allProxies.length;
-      const dupUrlCount = totalInputUrls - urls.length;
-      if (proxies && proxies.length > 0) {
-        const before = proxies.length;
-        proxies = deduplicateProxies(proxies);
-        u._lastStats = {
-          totalNodes: totalNodes,
-          actualNodes: proxies.length,
-          subSources: rawTexts.length + '/' + totalInputUrls,
-          dupSubs: dupSubCount,
-          dupUrls: dupUrlCount,
-          dupNodes: before - proxies.length,
-        };
-      } else {
-        u._lastStats = {
-          totalNodes: totalNodes,
-          actualNodes: 0,
-          subSources: rawTexts.length + '/' + totalInputUrls,
-          dupSubs: dupSubCount,
-          dupUrls: dupUrlCount,
-          dupNodes: 0,
-        };
-      }
-      u._lastUrlCount = rawTexts.length + '/' + totalInputUrls;
-      u._lastFetchUa = usedUas.length > 0 ? usedUas.join('\n') : null;
-    }
-  }
-
-  if (proxies === undefined) {
-  // 检查是否包含 Gost Tunnel
-  const gostInfo = isGostSocksContent(subText);
-  gostLines = [];
-
-  if (gostInfo) {
-    const split = splitGostLines(subText);
-    gostLines = split.gostLines;
-    subText = split.otherLines;
-  }
-
-  // 解析节点
-  try {
-    proxies = ProxyUtils.parse(subText);
-  } catch (e) {
-    proxies = null;
-  }
-
-  // 去重
-  if (proxies && proxies.length > 0) {
-    const before = proxies.length;
-    proxies = deduplicateProxies(proxies);
-    const deduped = before - proxies.length;
-    if (u._lastStats) {
-      u._lastStats.dupNodes = deduped;
-      u._lastStats.actualNodes = proxies.length;
-    }
-    u._lastDedupCount = deduped;
-  }
-  }
-
-  // 分离当前文件节点类型
-  const currentWg = proxies ? proxies.filter(p => p.type === 'wireguard') : [];
-  const currentStd = proxies ? proxies.filter(p => p.type !== 'wireguard') : [];
-
-  // dedup
-  const mergedStd = deduplicateProxies(currentStd);
-  const mergedWg = deduplicateProxies(currentWg);
-  const mergedGost = u._accGostInput
-    ? u._accGostInput + '\n' + (gostLines.length > 0 ? gostLines.join('\n') : '')
-    : (gostLines.length > 0 ? gostLines.join('\n') : '');
-  const hasStd = mergedStd.length > 0;
-  const hasWg = mergedWg.length > 0;
-  const hasGost = mergedGost.length > 0;
-
-  // 存回 lastProxies（格式转换用）
-  u._lastProxies = mergedStd;
-  u._lastWgProxies = mergedWg;
-  u._lastSubInput = subText;
+  // 所有文本 → 直接保存为文本短链，不解析
+  const preview = content.length > 50 ? content.slice(0, 50) + '...' : content;
+  const { id, url: clipUrl } = await saveToClipAndTrack(content, ttl, env, uid, {
+    preview: '\u{1F4C4} ' + preview, nodeCount: 0, source: 'text',
+    burn: u?._burn || false,
+    landing: u?._landing || false,
+  }, getEffectiveMaxAccess(u));
+  const previewShow = content.length > 150 ? content.slice(0, 150) + '...' : content;
+  const ttlT = ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttl < 3600 ? Math.round(ttl / 60) + '\u5206\u949F' : Math.round(ttl / 3600) + '\u5C0F\u65F6';
+  const accT = getEffectiveMaxAccess(u) === 0 ? '' : '\n\u{1F4CA} ' + getEffectiveMaxAccess(u) + ' IP';
+  u._lastContent = content;
   u._lastRawContent = content;
-  u._lastProxiesRaw = proxies;
-  // 累计原始文本（用于原生格式输出）
-  u._accRawText = content;
-  u._accGostInput = mergedGost;
+  u._lastSubInput = content;
 
-  // 远程 → 清 fmtMsg
-  if (isRemote) u._fmtMsg = null;
+  const resultText =
+    '\u{1F4E6} <b>\u68C0\u6D4B\u5230\u6587\u672C\u8F93\u5165</b>\n\n' +
+    '\u{1F517} \u5DF2\u751F\u6210\u77ED\u94FE\uFF1A\n<code>' + clipUrl + '</code>\n\n' +
+    '\u{1F4CB} \u9884\u89C8\uFF1A\n<code>' + escapeHTML(previewShow) + '</code>\n\n' +
+    '\u23F1 ' + ttlT + accT + '\n\n' +
+    '\u{1F4A1} \u5982\u9700\u89E3\u6790\u8BA2\u9605\uFF0C\u8BF7\u4F7F\u7528\u4E3B\u9875\u7684\u300C\u8BA2\u9605\u300D\u6309\u94AE\u5BFC\u5165\u8BA2\u9605\u94FE\u63A5';
 
-  // 每次新输入清内存残留统计
-  u._lastStats = null;
-  u._lastUrlCount = null;
-
-  // 纯 Gost（无任何节点）
-  if (hasGost && !hasStd && !hasWg) {
-    u._lastSubInput = subText;
-    u._lastRawContent = subText;
-    u._lastProxies = [];
-    u._wgProxies = null;
-    u._isGost = true;
-    u._gostCount = mergedGost.split('\n').filter(Boolean).length;
-    u._gostInput = mergedGost;
-    return replyOrEdit(u, cid, env, {
-      text: '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n\u{1F4CA} \u8282\u70B9\u6570: <b>' + u._gostCount + '</b>\n\u{1F4CD} Gost Tunnel: ' + u._gostCount + '\n\u26A0\uFE0F \u4EC5 Shadowrocket / URI \u5217\u8868\u652F\u6301 Gost Tunnel\n\n\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
-      parse_mode: 'HTML',
-      reply_markup: fmtKb(FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)), u._convTtl, u.ttl, u),
-    });
-  }
-
-  // 没有任何节点
-  if (!hasStd && !hasWg && !hasGost) {
-    // 防御：subText 为空或太短（fetch 失败）时不存空短链
-    if (!subText || subText.trim().length < 10) {
-      return replyOrEdit(u, cid, env, {
-        text: '\u274C \u8BA2\u9605\u62C9\u53D6\u5931\u8D25\u6216\u5185\u5BB9\u4E3A\u7A7A\u3002\n\n\u76F4\u8FDE\u4E0E\u53CD\u4EE3\u5747\u5931\u8D25\uFF0C\u8BE5\u8BA2\u9605\u53EF\u80FD\u5F00\u542F\u4E86\u4E25\u683C\u9632\u6293\u3002\n\n\u8BF7\u5C06\u8BA2\u9605\u5185\u5BB9\uff08base64 \u6216 URI \u5217\u8868\uff09\u76F4\u63A5\u53D1\u7ED9\u672C\u7FFB\u8BD1\u673A\u5668\u4EBA\uFF0C\u5373\u53EF\u6B63\u5E38\u8F6C\u6362\u3002',
-      });
-    }
-    try {
-      const preview = subText.length > 50 ? subText.slice(0, 50) + '...' : subText;
-      const { id, url: clipUrl } = await saveToClipAndTrack(subText, ttl, env, uid, {
-        preview: '\u{1F4C4} ' + preview, nodeCount: 0, source: 'text',
-        burn: u?._burn || false,
-        landing: u?._landing || false,
-      }, getEffectiveMaxAccess(u));
-      const previewShow = subText.length > 150 ? subText.slice(0, 150) + '...' : subText;
-      const ttlT = ttl === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttl < 3600 ? Math.round(ttl / 60) + '\u5206\u949F' : Math.round(ttl / 3600) + '\u5C0F\u65F6';
-      const accT = getEffectiveMaxAccess(u) === 0 ? '' : '\n\u{1F4CA} ' + getEffectiveMaxAccess(u) + ' IP';
-      u._lastContent = subText;
-      u._lastRawContent = subText;
-      u._lastSubInput = subText;
-      return replyOrEdit(u, cid, env, {
-        text: '\u2705 <b>\u5DF2\u4FDD\u5B58</b>\n\n\u{1F517} <code>' + clipUrl + '</code>\n\n\u{1F4CB} \u9884\u89C8:\n<code>' + escapeHTML(previewShow) + '</code>\n\n\u23F1 ' + ttlT + accT,
-        parse_mode: 'HTML', reply_markup: resultKb(clipUrl),
-      });
-    } catch (e) {
-      return replyOrEdit(u, cid, env, { text: '\u274C \u4FDD\u5B58\u5931\u8D25: ' + e.message });
-    }
-  }
-
-  // 设置状态（供回调使用）
-  u._lastProxies = mergedStd;
-  u._wgProxies = mergedWg.length > 0 ? mergedWg : null;
-  u._lastSubInput = subText;
-  u._isGost = hasGost;
-  u._gostInput = mergedGost;
-  u._gostCount = mergedGost.split('\n').filter(Boolean).length;
-
-  // 统计类型
-  const types = {};
-  for (const p of mergedStd) { types[p.type] = (types[p.type] || 0) + 1; }
-  let typeStr = Object.entries(types).map(([k, v]) => k + ': ' + v).join(', ');
-  if (hasWg) typeStr += '\n\u26A1 WireGuard: ' + mergedWg.length + ' \u00B7 Clash Meta YAML \u5355\u72EC\u8F93\u51FA';
-  if (hasGost) typeStr += '\n\u{1F504} Gost Tunnel: ' + u._gostCount + ' \u00B7 \u539F\u59CB\u683C\u5F0F\u5355\u72EC\u8F93\u51FA';
-
-  const gostHint = hasGost ? '\n\u{1F504} Gost Tunnel \u00D7 ' + u._gostCount + ' \u2014 \u4FDD\u7559\u539F\u59CB\u683C\u5F0F\u5355\u72EC\u8F93\u51FA\n' : '';
-  const wgHint = hasWg ? '\n\u26A1 WireGuard \u00D7 ' + mergedWg.length + ' \u2014 \u9ED8\u8BA4 Clash Meta YAML \u5355\u72EC\u8F93\u51FA\n' : '';
-  const accHint = '';
-
-  const sourceInfo = u._lastUrlCount
-    ? '\n\u{1F517} ' + (typeof u._lastUrlCount === 'number' ? u._lastUrlCount + ' \u4E2A\u8BA2\u9605\u6E90' : u._lastUrlCount + ' \u4E2A\u8BA2\u9605\u6E90')
-    : '';
-  const uaInfo = u._lastFetchUa ? '\n\u{1F916} ' + escapeHTML(u._lastFetchUa) : '';
-
-  const statsLine = u._lastStats
-    ? '\n\u{1F4CA} <b>' + u._lastStats.actualNodes + '</b> \u5B9E\u9645 (\u603B: ' + u._lastStats.totalNodes +
-      (u._lastStats.dupUrls > 0 ? ', \u53BB\u91CD\u94FE\u63A5: ' + u._lastStats.dupUrls : '') +
-      (u._lastStats.dupSubs > 0 ? ', \u91CD\u590D\u8BA2\u9605: ' + u._lastStats.dupSubs : '') +
-      (u._lastStats.dupNodes > 0 ? ', \u91CD\u590D\u8282\u70B9: ' + u._lastStats.dupNodes : '') + ')'
-    : '';
-
-  // 格式选择消息
-  const fmtText =
-    '\u{1F504} <b>\u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9</b>\n\n' +
-    (statsLine ? '' : '\u{1F4CA} \u8282\u70B9\u6570: <b>' + mergedStd.length + '</b>' + (u._lastDedupCount > 0 ? '\u3001\u53BB\u91CD: ' + u._lastDedupCount : '') + '\n') +
-    statsLine + '\n' +
-    '\u{1F4CD} ' + typeStr + '\n' +
-    sourceInfo + uaInfo + '\n' +
-    gostHint + wgHint + accHint +
-    '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:';
-
-  if (!isRemote && u._fmtMsg && u._fmtMsg.id) {
+  // 编辑主页消息显示结果
+  if (u.promptCid && u.promptMid) {
     await tg('editMessageText', env.BOT_TOKEN, {
-      chat_id: u._fmtMsg.cid, message_id: u._fmtMsg.id,
-      text: fmtText, parse_mode: 'HTML',
-      reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
-    });
-    u._fmtText = fmtText;
-  } else {
-    const sent = await replyOrEdit(u, cid, env, {
-      text: fmtText, parse_mode: 'HTML',
-      reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
-    });
-    if (!isRemote) {
-      const msgId = sent?.result?.message_id || (sent?.from_edit ? u.promptMid : null);
-      u._fmtMsg = msgId ? { cid: cid, id: msgId } : null;
-      u._fmtText = fmtText;
-    }
+      chat_id: u.promptCid, message_id: u.promptMid,
+      text: resultText, parse_mode: 'HTML',
+      reply_markup: backKb(),
+    }).catch(() => {});
   }
+
+  // 同时发送一条新消息（确保用户看到）
+  return tg('sendMessage', env.BOT_TOKEN, {
+    chat_id: cid,
+    text: resultText,
+    parse_mode: 'HTML',
+    reply_markup: backKb(),
+  });
+
 }
 
 // ==================== 回调处理 ====================
@@ -1425,8 +1320,7 @@ async function cb_menu(env, uid, cid, mid, u, d, q) {
   // 返回主页 → 清理所有收集/临时状态
   u._collected = null;
   u._collectMode = null;
-  u._fmtMsg = null; u._lastProxies = null; u._lastWgProxies = null; u._lastSubInput = null;
-  u._accRawText = null; u._accGostInput = null;
+  u._fmtMsg = null; u._lastProxies = null; u._lastSubInput = null;
   return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
@@ -1470,22 +1364,34 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
       });
     }
     if (mode === 'url') {
-      // ===== 远程订阅：构造消息体丢给 onMsg 原流程 =====
-      const urlText = items.filter(i => i.url).map(i => i.url).join('\n');
-      if (!urlText) {
+      // ===== 远程订阅：直接调用 processRemoteUrls 拉取解析 =====
+      const urls = items.filter(i => i.url).map(i => i.url);
+      if (urls.length === 0) {
         return tg('sendMessage', env.BOT_TOKEN, { chat_id: cid, text: '\u274C 没有有效的订阅链接', reply_markup: backKb() });
       }
-      const fakeMsg = { chat: { id: cid }, from: { id: parseInt(uid) }, text: urlText };
-      // 先回复 callback query，再走 onMsg 流程
-      // 由于 u 是同一个 getState 对象，_collectMode 已清空不会再次拦截
-      return onMsg(fakeMsg, env);
+      return processRemoteUrls(urls, cid, uid, u, env);
     }
     // ===== 本地文件/文本：继续原有解析流程 =====
     let proxies = [];
+    let gostInput = '';
     for (const item of items) {
-      let parsed = parseProxies(item.content);
-      if (parsed && parsed.length > 0) proxies.push(...parsed);
+      const content = item.content || '';
+      // 检测 Gost 隧道行
+      if (isGostSocksContent(content)) {
+        const { gostLines: gostParts, otherLines: restParts } = splitGostLines(content);
+        if (gostParts.length > 0) {
+          gostInput += (gostInput ? '\n' : '') + gostParts.join('\n');
+        }
+        if (restParts.trim().length > 0) {
+          const parsed = parseProxies(restParts);
+          if (parsed && parsed.length > 0) proxies.push(...parsed);
+        }
+      } else {
+        let parsed = parseProxies(content);
+        if (parsed && parsed.length > 0) proxies.push(...parsed);
+      }
     }
+    u._gostInput = gostInput || u._gostInput || null;
     if (proxies.length === 0) {
       // 回退：从原始文本提取 Surge 行
       const surgeLines = [];
@@ -1498,30 +1404,46 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
     // 清理 KV
     env.KV.delete('collect:' + uid).catch(() => {});
     if (!proxies || proxies.length === 0) {
+      // 没解析到标准节点但有 Gost 隧道 → 走 Gost 流程
+      if (gostInput || u._gostInput) {
+        u._isGost = true;
+        u._gostInput = gostInput || u._gostInput;
+        u._gostCount = (gostInput || u._gostInput || '').split('\n').filter(Boolean).length;
+        u._lastProxies = [];
+        const text = '\u{1F504} \u68C0\u6D4B\u5230 Gost \u8F93\u5165\n\n\u{1F4CA} Gost: ' + u._gostCount + ' \u6761\n\u26A0\uFE0F \u4EC5 Shadowrocket / URI \u683C\u5F0F\u80FD\u8F6C\u6362 Gost\uFF0C\u5176\u4ED6\u683C\u5F0F\u5C06\u8F93\u51FA\u539F\u59CB\u5185\u5BB9\n\n\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:';
+        return tg('editMessageText', env.BOT_TOKEN, {
+          chat_id: cid, message_id: mid, text, parse_mode: 'HTML',
+          reply_markup: fmtKb(null, null, null, u),
+        });
+      }
       return tg('sendMessage', env.BOT_TOKEN, {
         chat_id: cid, text: '\u274C 无法从收集的内容中解析出任何节点', reply_markup: backKb(),
       });
     }
-    // 切换到标准处理流程：拆分 WG/普通
-    const currentWg = proxies.filter(p => p.type === 'wireguard');
-    const currentStd = proxies.filter(p => p.type !== 'wireguard');
     // 去重
-    const mergedStd = deduplicateProxies(currentStd);
-    const mergedWg = deduplicateProxies(currentWg);
+    const mergedStd = deduplicateProxies(proxies);
+    const dedupCount = proxies.length - mergedStd.length;
     u._lastProxies = mergedStd;
-    u._lastWgProxies = mergedWg;
     u._fmtMsg = null;
+    // 计算 Gost 数量（如有）
+    if (u._gostInput && !u._gostCount) {
+      u._gostCount = u._gostInput.split('\n').filter(Boolean).length;
+    }
     // 显示格式选择
-    if (mergedStd.length === 0 && mergedWg.length === 0) {
+    if (mergedStd.length === 0) {
       return tg('sendMessage', env.BOT_TOKEN, {
-        chat_id: cid, text: '\u274C 解析后没有标准节点', reply_markup: backKb(),
+        chat_id: cid, text: '\u274C \u89E3\u6790\u540E\u6CA1\u6709\u8282\u70B9', reply_markup: backKb(),
       });
     }
-    const dedup = (currentStd.length + currentWg.length) - (mergedStd.length + mergedWg.length);
     const types = {};
     for (const p of mergedStd) types[p.type] = (types[p.type] || 0) + 1;
-    const typeStr = Object.entries(types).sort((a,b) => b[1]-a[1]).map(([t,c]) => t + ': ' + c).join(', ');
-    const text = '\u{1F504} \u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9\n\n\u{1F4CA} \u8282\u70B9\u6570: ' + mergedStd.length + '\u3001\u53BB\u91CD: ' + dedup +
+    let typeStr = Object.entries(types).sort((a,b) => b[1]-a[1]).map(([t,c]) => t + ': ' + c).join(', ');
+    const wgCount = mergedStd.filter(p => p.type === 'wireguard').length;
+    if (wgCount > 0) typeStr += '\n\u26A1 WireGuard \u00D7 ' + wgCount + ' — Surge \u4E0D\u652F\u6301\uFF0C\u5C06\u81EA\u52A8\u4EE5\u539F\u751F YAML \u5206\u94FE';
+    if (u._gostInput && u._gostCount) typeStr += '\n\u{1F504} Gost \u00D7 ' + u._gostCount + ' — \u5EFA\u8BAE\u9009 Shadowrocket';
+    const text = '\u{1F504} \u68C0\u6D4B\u5230\u8BA2\u9605\u5185\u5BB9\n\n\u{1F4CA} \u8282\u70B9\u6570: ' + mergedStd.length +
+      (u._gostCount ? ' + Gost ' + u._gostCount : '') +
+      (dedupCount > 0 ? '\u3001\u53BB\u91CD: ' + dedupCount : '') +
       '\n\n\u{1F4CD} ' + typeStr + '\n\n\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:';
     const formats = FORMAT_OPTIONS;
     return tg('editMessageText', env.BOT_TOKEN, {
@@ -1983,33 +1905,27 @@ async function cb_acc_set(env, uid, cid, mid, u, d, q) {
 
 async function cb_conv_toggle_burn(env, uid, cid, mid, u, d, q) {
   u._burn = !u._burn;
-    const formats = u._isGost && (!u._lastProxies || u._lastProxies.length === 0)
-      ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
     return tg('editMessageReplyMarkup', env.BOT_TOKEN, {
       chat_id: cid, message_id: mid,
-      reply_markup: fmtKb(formats, u._convTtl, u.ttl, u),
+      reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
     });
 }
 
 async function cb_conv_toggle_landing(env, uid, cid, mid, u, d, q) {
   u._landing = !u._landing;
-    const formats = u._isGost && (!u._lastProxies || u._lastProxies.length === 0)
-      ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
     return tg('editMessageReplyMarkup', env.BOT_TOKEN, {
       chat_id: cid, message_id: mid,
-      reply_markup: fmtKb(formats, u._convTtl, u.ttl, u),
+      reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
     });
 }
 
 async function cb_conv_back(env, uid, cid, mid, u, d, q) {
-  const isGost = u._isGost && (!u._lastProxies || u._lastProxies.length === 0);
-    const formats = isGost ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
       text: u._fmtText || '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
       parse_mode: 'HTML',
-      reply_markup: fmtKb(formats, u._convTtl, u.ttl, u),
+      reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
     });
 }
 
@@ -2046,14 +1962,12 @@ async function cb_conv_ttl_menu(env, uid, cid, mid, u, d, q) {
 async function cb_conv_ttl_set(env, uid, cid, mid, u, d, q) {
   const ttlVal = parseInt(d.split(':')[1]);
     u._convTtl = ttlVal;
-    const isGost = u._isGost && (!u._lastProxies || u._lastProxies.length === 0);
-    const formats = isGost ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
       text: '\u2705 \u5DF2\u8BBE\u7F6E\u5F53\u524D\u6642\u6548: ' + (ttlVal === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : ttlVal < 3600 ? Math.round(ttlVal / 60) + '\u5206\u949F' : Math.round(ttlVal / 3600) + '\u5C0F\u65F6'),
       parse_mode: 'HTML',
-      reply_markup: fmtKb(formats, u._convTtl, u.ttl, u),
+      reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
     });
 }
 
@@ -2071,14 +1985,12 @@ async function cb_conv_acc_menu(env, uid, cid, mid, u, d, q) {
 async function cb_conv_acc_set(env, uid, cid, mid, u, d, q) {
   const accVal = parseInt(d.split(':')[1]);
     u._convAccessLimit = accVal;
-    const isGost = u._isGost && (!u._lastProxies || u._lastProxies.length === 0);
-    const formats = isGost ? FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)) : null;
     return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
       text: '\u2705 \u5DF2\u8BBE\u7F6E\u5F53\u524D\u8BBF\u95EE\u6B21\u6570: ' + (accVal === 0 ? '\u4E0D\u9650' : accVal + ' IP'),
       parse_mode: 'HTML',
-      reply_markup: fmtKb(formats, u._convTtl, u.ttl, u),
+      reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
     });
 }
 
@@ -2088,15 +2000,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
     // 纯 Gost（无标准节点）：直接输出原始内容
     if (u._isGost && (!u._lastProxies || u._lastProxies.length === 0)) {
-      if (!GOST_FORMATS.includes(fmt)) {
-        return tg('editMessageText', env.BOT_TOKEN, {
-          chat_id: cid,
-          message_id: mid,
-          text: '\u274C Gost Tunnel \u4E0D\u652F\u6301\u8BE5\u683C\u5F0F',
-          parse_mode: 'HTML',
-          reply_markup: fmtKb(FORMAT_OPTIONS.filter(f => GOST_FORMATS.includes(f.id)), u._convTtl, u.ttl, u),
-        });
-      }
       const rawText = u._gostInput || u._lastSubInput || '';
       try {
         const { id, url: clipUrl } = await saveToClipAndTrack(rawText, getEffectiveTtl(u), env, uid, {
@@ -2173,11 +2076,8 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
         // 兜底：从 parsed proxies 拼接
         let std = '';
         try { std = ProxyUtils.produce(proxiesForConvert, 'uri'); } catch {}
-        const wgList = u._accWgProxies || u._wgProxies || [];
-        let wgOut = '';
-        if (wgList.length > 0) { try { wgOut = ProxyUtils.produce(wgList, 'clashmeta'); } catch {} }
-        const gostRaw = u._accGostInput || u._gostInput || '';
-        rawText = btoa(unescape(encodeURIComponent([std, wgOut, gostRaw].filter(Boolean).join('\n'))));
+        const gostRaw = u._gostInput || '';
+        rawText = btoa(unescape(encodeURIComponent([std, gostRaw].filter(Boolean).join('\n'))));
       }
       output = rawText;
     } else if (fmt === 'native') {
@@ -2232,9 +2132,15 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
         return lines.join('\n');
       }).join('\n');
     } else {
-      // 其他格式 → Sub 引擎
+      // Sub 引擎产出（Surge 特殊处理 WG）
+      const surgeWg = proxiesForConvert.filter(p => p.type === 'wireguard');
+      const surgeStd = proxiesForConvert.filter(p => p.type !== 'wireguard');
       try {
-        output = ProxyUtils.produce(proxiesForConvert, fmt);
+        if ((fmt === 'surge' || fmt === 'surfboard') && surgeWg.length > 0) {
+          output = surgeStd.length > 0 ? ProxyUtils.produce(surgeStd, fmt) : '';
+        } else {
+          output = ProxyUtils.produce(proxiesForConvert, fmt);
+        }
       } catch (e) {
         return tg('editMessageText', env.BOT_TOKEN, {
           chat_id: cid, message_id: mid,
@@ -2242,6 +2148,49 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
           parse_mode: 'HTML', reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
         });
       }
+    }
+
+    // Surge/Surfboard + WG：以原生 YAML 为主输出或分链
+    const surgeWgAll = proxiesForConvert.filter(p => p.type === 'wireguard');
+    if (!output && (fmt === 'surge' || fmt === 'surfboard') && surgeWgAll.length > 0) {
+      // 全节点都是 WG → 直接以原生 YAML 为主输出
+      output = 'proxies:\n' + proxiesForConvert.map(p => {
+        const order = ['name','type','server','port','uuid','server_port','ip','mtu'];
+        const seen = new Set();
+        const lines = [];
+        let isFirst = true;
+        const wl = (indent, k, v) => {
+          if (isFirst) { lines.push('  - ' + k + ': ' + v); isFirst = false; }
+          else lines.push(' '.repeat(indent) + k + ': ' + v);
+        };
+        for (const k of order) {
+          if (p[k] === undefined || p[k] === null) continue;
+          seen.add(k);
+          const v = p[k];
+          if (typeof v === 'boolean' || typeof v === 'number') wl(4, k, v);
+          else if (typeof v === 'string') {
+            const needsQuote = /[:#\[\]{},&*!|>'"%@` ]/.test(v) || v === '';
+            if (needsQuote) wl(4, k, '"' + v.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"');
+            else wl(4, k, v);
+          } else if (typeof v === 'object') {
+            wl(4, k, '');
+            for (const [sk, sv] of Object.entries(v)) {
+              if (sv !== undefined && sv !== null) {
+                const nq = typeof sv === 'string' && (sv.includes(':') || sv.includes('#') || sv.includes(' '));
+                lines.push('      ' + sk + ': ' + (nq ? '"' + sv.replace(/"/g,'\\"') + '"' : String(sv)));
+              }
+            }
+          }
+        }
+        for (const k of Object.keys(p)) {
+          if (seen.has(k)) continue;
+          const v = p[k];
+          if (v === undefined || v === null || k.startsWith('_')) continue;
+          if (typeof v === 'boolean' || typeof v === 'number') wl(4, k, v);
+          else wl(4, k, '"' + String(v).replace(/"/g,'\\"') + '"');
+        }
+        return lines.join('\n');
+      }).join('\n');
     }
 
     if (!output) {
@@ -2267,18 +2216,18 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       }, getEffectiveMaxAccess(u));
       u._lastContent = String(output);
 
-      // WG 侧链
-      const wg = u._wgProxies || [];
-      if (wg.length > 0) {
-        const wgOut = ProxyUtils.produce(wg, 'clashmeta');
-        if (wgOut) {
-          const { url: wgUrl } = await saveToClipAndTrack(String(wgOut), getEffectiveTtl(u), env, uid, {
-            preview: 'WireGuard × ' + wg.length + ' (Clash Meta)', nodeCount: wg.length, source: 'wg',
-            burn: u?._burn || false,
-            landing: u?._landing || false,
-          }, getEffectiveMaxAccess(u));
-          extraUrls.push({ text: '⚡ WireGuard', url: wgUrl });
-        }
+      // Surge/Surfboard + 混合节点：主输出已含非 WG，WG 节点分链输出原生 YAML
+      const nonWgCount = proxiesForConvert.filter(p => p.type !== 'wireguard').length;
+      if ((fmt === 'surge' || fmt === 'surfboard') && surgeWgAll.length > 0 && output && nonWgCount > 0) {
+        let wgYaml;
+        try { wgYaml = ProxyUtils.produce(surgeWgAll, 'clashmeta'); } catch {}
+        if (!wgYaml) wgYaml = 'proxies:\n' + surgeWgAll.map(p => '  - {name: "' + p.name + '", type: wireguard, server: ' + p.server + '}').join('\n');
+        const { url: wgUrl } = await saveToClipAndTrack(String(wgYaml), getEffectiveTtl(u), env, uid, {
+          preview: 'WireGuard × ' + surgeWgAll.length + ' (原生 YAML)', nodeCount: surgeWgAll.length, source: 'wg',
+          burn: u?._burn || false,
+          landing: u?._landing || false,
+        }, getEffectiveMaxAccess(u));
+        extraUrls.push({ text: '⚡ WireGuard (原生 YAML)', url: wgUrl });
       }
 
       // Gost 侧链
@@ -2359,14 +2308,17 @@ export default {
       const id = path.replace('/api/link-status/', '');
       const raw = await env.KV.get('share_' + id, { type: 'json' });
       if (!raw) {
-        return new Response(JSON.stringify({ alive: false }), { headers: { 'Content-Type': 'application/json', ...cors } });
+        return new Response(JSON.stringify({ alive: false, landingAlive: false }), { headers: { 'Content-Type': 'application/json', ...cors } });
       }
       const consumed = raw.consumed || false;
+      const landingConsumed = raw.landingConsumed || false;
       const accessedIPs = Array.isArray(raw.accessedIPs) ? raw.accessedIPs : [];
       const nodeCount = raw.nodeCount || 0;
       return new Response(JSON.stringify({
-        alive: !consumed,
+        alive: !consumed,               // 真链状态
+        landingAlive: !landingConsumed,  // 假链（落地页）状态
         consumed,
+        landingConsumed,
         nodeCount,
         maxAccess: raw.maxAccess || 0,
         accessCount: accessedIPs.length,
@@ -2383,92 +2335,114 @@ export default {
       if (!raw) {
         return Response.redirect('https://www.google.com', 302);
       }
-      const teaming = raw.landing || false;
+
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
       const burn = raw.burn || false;
+      const landing = raw.landing || false;
       const maxIPs = raw.maxAccess || 0;
-      const accessedIPs = Array.isArray(raw.accessedIPs) ? raw.accessedIPs : [];
       const ttl = raw.ttl || 0;
+      const consumed = raw.consumed || false;
+      const landingConsumed = raw.landingConsumed || false;
 
-      // ===== 落地页模式（landing + 非 ?raw 请求） =====
-      if (teaming && !isRaw) {
-        let consumed = raw.consumed || false;
-
-        // 阅后即焚：落地页首次访问展示真链并标记消耗
-        if (burn) {
-          const ipResult = await atomicTrackIP(env, id, clientIP, 0, ttl);
-          if (!ipResult.error && !ipResult.consumed) {
-            await env.KV.put('share_' + id, JSON.stringify({ ...raw, consumed: true }), ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {});
-          } else if (ipResult.consumed) {
-            consumed = true;
-          }
-        }
-
-        // 独立 IP 上限
-        if (!consumed && maxIPs > 0) {
-          const ipResult = await atomicTrackIP(env, id, clientIP, maxIPs, ttl);
-          if (ipResult.consumed) {
-            consumed = true;
-            await env.KV.put('share_' + id, JSON.stringify({ ...raw, consumed: true }), ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {});
-          }
-        }
-
-        // 普通访问：记 IP
-        if (!consumed && !burn) {
-          await atomicTrackIP(env, id, clientIP, 0, ttl);
-        }
-
-        // 获取落地页 HTML（从 GitHub 拉取，KV 缓存 24h）
-        // 从 KV 读缓存的落地页 HTML（含版本号，改版时递增）
+      // --- 获取落地页 HTML 辅助函数 ---
+      async function getLandingHtml() {
         let html = await env.KV.get('_landing_v1');
         if (!html) {
           const LANDING_HTML_URL = env.LANDING_HTML_URL ||
             'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/index.html';
-          // SSRF 防护：只允许从 GitHub 拉取落地页
           const allowedHosts = ['raw.githubusercontent.com', 'github.com', 'github.githubassets.com'];
           let urlOk = false;
-          try {
-            const u = new URL(LANDING_HTML_URL);
-            urlOk = allowedHosts.includes(u.hostname);
-          } catch {}
-          if (!urlOk) {
-            html = '<html><body><h1>Invalid landing page URL</h1></body></html>';
-          } else {
+          try { const u = new URL(LANDING_HTML_URL); urlOk = allowedHosts.includes(u.hostname); } catch {}
+          if (urlOk) {
             try {
               const ghResp = await fetch(LANDING_HTML_URL);
-              if (ghResp.ok) {
-                html = await ghResp.text();
-                await env.KV.put('_landing_v1', html, { expirationTtl: 86400 });
-              }
+              if (ghResp.ok) { html = await ghResp.text(); await env.KV.put('_landing_v1', html, { expirationTtl: 86400 }); }
             } catch {}
           }
+          if (!html) html = '<html><body><h1>Service Unavailable</h1></body></html>';
         }
-        if (!html) {
-          // 兜底：如果拉取失败，返回原始文本
-          const headers = { 'Content-Type': 'text/plain; charset=utf-8' };
-          if (raw.subInfo) headers['Subscription-Userinfo'] =
-            `upload=${raw.subInfo.up}; download=${raw.subInfo.down}; total=${raw.subInfo.total}; expire=${raw.subInfo.expire}`;
-          return new Response(raw.text, { headers });
-        }
+        return html;
+      }
 
-        // 替换占位符
-        html = html.replace(/__ID__/g, id).replace(/__STATUS__/g, consumed ? 'consumed' : 'alive');
+      // --- 渲染落地页（假链详情）---
+      // realStatus: 'alive' | 'consumed' | 'expired'
+      // landingStatus: 'alive' | 'consumed' | 'expired'
+      async function renderLandingPage(realStatus, landingStatus) {
+        let html = await getLandingHtml();
+        html = html.replace(/__ID__/g, id)
+          .replace(/__STATUS__/g, realStatus)
+          .replace(/__LANDING_STATUS__/g, landingStatus);
         return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       }
 
-      // ===== 非落地页模式（或 ?raw 请求）= 原始行为 =====
-      // 阅后即焚：首次访问即销毁
+      // --- 真链是否已失效 ---
+      const realDead = consumed || !raw.text;
+
+      // ===== ?raw 请求（真链）=====
+      if (isRaw) {
+        if (realDead) {
+          // 真链已失效 → 显示落地页
+          if (landing) {
+            // 有落地页 → 渲染落地页（假链可能也过期了）
+            const lStatus = landingConsumed ? 'consumed' : 'alive';
+            return renderLandingPage('consumed', lStatus);
+          }
+          // 无落地页 → 跳 google
+          return Response.redirect('https://www.google.com', 302);
+        }
+        if (burn) {
+          // 阅后即焚：清空 text，标记 consumed
+          ctx.waitUntil(env.KV.put('share_' + id, JSON.stringify({ ...raw, consumed: true, text: '' }), ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {}));
+        }
+        return new Response(raw.text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      }
+
+      // ===== 落地页模式（landing + 非 ?raw）=====
+      if (landing) {
+        // 检查假链是否已过期（IP 上限或 TTL）
+        let myLandingConsumed = landingConsumed;
+
+        if (!myLandingConsumed && maxIPs > 0) {
+          const ipResult = await atomicTrackIP(env, id, clientIP, maxIPs, ttl);
+          if (ipResult.consumed) {
+            myLandingConsumed = true;
+            await env.KV.put('share_' + id, JSON.stringify({ ...raw, landingConsumed: true }), ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {});
+          }
+        } else if (!myLandingConsumed) {
+          await atomicTrackIP(env, id, clientIP, 0, ttl);
+        }
+
+        // 真链状态
+        const realStatus = realDead ? 'consumed' : 'alive';
+        // 假链状态
+        const lStatus = myLandingConsumed ? 'consumed' : 'alive';
+
+        // 三振规则：失败的落地页被访问 3 次后彻底删 KV
+        if (realDead || myLandingConsumed) {
+          const failCount = (raw._failAccess || 0) + 1;
+          if (failCount >= 3) {
+            ctx.waitUntil(env.KV.delete('share_' + id).catch(() => {}));
+            return renderLandingPage(realStatus, lStatus);
+          }
+          ctx.waitUntil(env.KV.put('share_' + id, JSON.stringify({ ...raw, _failAccess: failCount }), ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {}));
+        }
+
+        return renderLandingPage(realStatus, lStatus);
+      }
+
+      // ===== 非落地页、非 ?raw → 直接返回内容 =====
+      // 阅后即焚（无 landing 时）
       if (burn) {
-        ctx.waitUntil(env.KV.delete('share_' + id).catch(() => {}));
-        const headers = { 'Content-Type': 'text/plain; charset=utf-8' };
-        if (raw.subInfo) headers['Subscription-Userinfo'] =
-          `upload=${raw.subInfo.up}; download=${raw.subInfo.down}; total=${raw.subInfo.total}; expire=${raw.subInfo.expire}`;
-        return new Response(raw.text, { headers });
+        if (realDead) {
+          return Response.redirect('https://www.google.com', 302);
+        }
+        ctx.waitUntil(env.KV.put('share_' + id, JSON.stringify({ ...raw, consumed: true, text: '' }), ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {}));
+        return new Response(raw.text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
       }
 
       // 独立 IP 上限
+      const accessedIPs = Array.isArray(raw.accessedIPs) ? raw.accessedIPs : [];
       if (maxIPs > 0 && accessedIPs.length >= maxIPs) {
-        ctx.waitUntil(env.KV.delete('share_' + id).catch(() => {}));
         return Response.redirect('https://www.google.com', 302);
       }
 
@@ -2482,10 +2456,7 @@ export default {
         ).catch(() => {}));
       }
 
-      // 伪装流量头
       const respHeaders = { 'Content-Type': 'text/plain; charset=utf-8' };
-      if (raw.subInfo) respHeaders['Subscription-Userinfo'] =
-        `upload=${raw.subInfo.up}; download=${raw.subInfo.down}; total=${raw.subInfo.total}; expire=${raw.subInfo.expire}`;
       return new Response(raw.text, { headers: respHeaders });
     }
 
