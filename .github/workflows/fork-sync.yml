@@ -61,8 +61,8 @@ jobs:
 
           # 排除 workflow 文件变更（GITHUB_TOKEN 无 workflows 写权限）
           git reset HEAD .github/workflows/ 2>/dev/null || true
-          # 只在有变更时 commit
-          git diff --cached --quiet || git commit --no-edit
+          # 只在有变更时 commit（失败也不阻断）
+          git diff --cached --quiet || git commit --no-edit || true
           git push origin main
           echo "changed=true" >> $GITHUB_OUTPUT
 
