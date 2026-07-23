@@ -14,7 +14,7 @@ proxy_code = open("proxy-utils.esm.js", "rb").read()
 # 用 multipart 上传到全量端点（保留 bindings）
 meta = json.dumps({
     "main_module": "worker.mjs",
-    "keep_bindings": ["kv_namespaces", "vars", "secrets", "services"],
+    "keep_bindings": ["kv_namespace", "vars", "secrets", "service"],
 })
 parts = (
     ("metadata", ("metadata.json", meta, "application/json")),
