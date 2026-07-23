@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  workflows: write
 
 jobs:
   sync:
@@ -55,13 +54,17 @@ jobs:
           # 仍有冲突的用上游版本
           git checkout --theirs -- . 2>/dev/null || true
 
-          # 恢复本地配置
+          # 恢复本地配置（先删掉上游新增的 workflow 文件）
+          rm -rf .github/workflows
           mkdir -p .github/workflows
           cp -r /tmp/wfbak/* .github/workflows/ 2>/dev/null || true
           cp /tmp/wfbak/wrangler.toml . 2>/dev/null || true
           rm -rf /tmp/wfbak
 
-          git commit --no-edit
+          # 排除 workflow 文件变更（GITHUB_TOKEN 无 workflows 写权限）
+          git reset HEAD .github/workflows/ 2>/dev/null || true
+          # 只在有变更时 commit
+          git diff --cached --quiet || git commit --no-edit
           git push origin main
           echo "changed=true" >> $GITHUB_OUTPUT
 
