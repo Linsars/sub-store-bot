@@ -20,7 +20,7 @@ files = (
     ('worker.mjs', ('worker.mjs', open(f'{DIR}/worker.mjs', 'rb'), 'application/javascript+module')),
     ('proxy-utils.esm.js', ('proxy-utils.esm.js', open(f'{DIR}/proxy-utils.esm.js', 'rb'), 'application/javascript+module')),
 )
-r = requests.put(f'{BASE}/content', files=files, headers={'Authorization': f'Bearer {TOKEN}'})
+r = requests.put(BASE, files=files, headers={'Authorization': f'Bearer {TOKEN}'})
 result = r.json()
 if result.get('success'):
     print('Deploy OK — 代码已更新，变量已保留')
