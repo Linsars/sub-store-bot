@@ -10,19 +10,41 @@ if not ACCOUNT or not TOKEN or not NAME:
     sys.exit(1)
 
 BASE = f'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/{NAME}'
+HEADERS = {'Authorization': f'Bearer {TOKEN}'}
 
-# Only main_module in metadata — NO bindings, preserves existing ones
-meta = json.dumps({'main_module': 'worker.mjs'})
+# 1) GET 当前 bindings（变量/密钥/服务绑定等）
+r = requests.get(BASE, headers=HEADERS)
+if r.status_code == 200:
+    existing = r.json().get('result', {})
+    bindings = existing.get('bindings', [])
+    compat_date = existing.get('compatibility_date', '')
+    compat_flags = existing.get('compatibility_flags', [])
+    # 排除 bindings 中的 'main_module' 等非 binding 字段
+    print(f'Found {len(bindings)} existing binding(s)')
+else:
+    bindings = []
+    compat_date = ''
+    compat_flags = []
+    print(f'No existing script found (HTTP {r.status_code}), deploying fresh')
+
+# 2) 构建 metadata — 保留 bindings
+meta = {'main_module': 'worker.mjs'}
+if bindings:
+    meta['bindings'] = bindings
+if compat_date:
+    meta['compatibility_date'] = compat_date
+if compat_flags:
+    meta['compatibility_flags'] = compat_flags
 
 files = (
-    ('metadata', ('meta.json', meta, 'application/json')),
+    ('metadata', ('meta.json', json.dumps(meta), 'application/json')),
     ('worker.mjs', ('worker.mjs', open(f'{DIR}/worker.mjs', 'rb'), 'application/javascript+module')),
     ('proxy-utils.esm.js', ('proxy-utils.esm.js', open(f'{DIR}/proxy-utils.esm.js', 'rb'), 'application/javascript+module')),
 )
-r = requests.put(f'{BASE}/content', files=files, headers={'Authorization': f'Bearer {TOKEN}'})
+r = requests.put(f'{BASE}/content', files=files, headers=HEADERS)
 result = r.json()
 if result.get('success'):
-    print('Deploy OK — 代码已更新，变量未动')
+    print(f'Deploy OK — 代码已更新，{len(bindings)} 个 binding 保留')
 else:
-    print('FAILED:', json.dumps(result.get('errors', ''), indent=2)[:300])
+    print('FAILED:', json.dumps(result.get('errors', ''), indent=2)[:500])
     sys.exit(1)
