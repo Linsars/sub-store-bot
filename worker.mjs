@@ -54,6 +54,53 @@ function formatTtlLabel(s) {
   return s === 0 ? '\u6C38\u4E0D\u8FC7\u671F' : s < 3600 ? Math.round(s / 60) + '\u5206\u949F' : Math.round(s / 3600) + '\u5C0F\u65F6';
 }
 
+// ==================== 日志与错误处理 ====================
+
+function log(level, uid, msg, data = null) {
+  const entry = {
+    ts: new Date().toISOString(),
+    uid: String(uid || 'system'),
+    level: level.toUpperCase(),
+    msg,
+    ...(data && { data })
+  };
+  console.log(JSON.stringify(entry));
+}
+
+async function safeExecute(fn, env, uid, cid, mid = null, context = '') {
+  try {
+    return await fn();
+  } catch (err) {
+    log('ERROR', uid, `Execution failed in ${context}`, {
+      message: err.message,
+      context
+    });
+
+    let hint = '';
+    const lower = (err.message || '').toLowerCase();
+    if (lower.includes('fetch') || lower.includes('timeout') || lower.includes('network') || lower.includes('502') || lower.includes('503')) {
+      hint = '\n\n\u{1F4A1} \u8BA2\u9605\u94FE\u63A5\u53EF\u80FD\u65E0\u6CD5\u8BBF\u95EE\uFF0C\u5C1D\u8BD5\u66F4\u6362\u94FE\u63A5\u6216\u7A0D\u540E\u91CD\u8BD5';
+    } else if (lower.includes('parse') || lower.includes('format') || lower.includes('json')) {
+      hint = '\n\n\u{1F4A1} \u8BA2\u9605\u683C\u5F0F\u53EF\u80FD\u4E0D\u652F\u6301\uFF0C\u5C1D\u8BD5\u5176\u4ED6\u5BA2\u6237\u7AEF\u683C\u5F0F';
+    } else if (lower.includes('empty') || lower.includes('0 node') || lower.includes('\u6CA1\u6709\u89E3\u6790')) {
+      hint = '\n\n\u{1F4A1} \u8BA2\u9605\u4E2D\u6CA1\u6709\u68C0\u6D4B\u5230\u6709\u6548\u8282\u70B9';
+    } else if (lower.includes('kv') || lower.includes('d1')) {
+      hint = '\n\n\u{1F4A1} \u5B58\u50A8\u670D\u52A1\u5F02\u5E38\uFF0C\u8BF7\u68C0\u67E5 KV \u914D\u7F6E';
+    }
+
+    const userErrorMsg = '\u274C \u5904\u7406\u5931\u8D25' + (context ? ' [' + context + ']' : '') +
+      '\n\n\u539F\u56E0: ' + (err.message || '\u672A\u77E5\u9519\u8BEF') + hint;
+
+    if (mid) {
+      return editMsg(env, cid, mid, userErrorMsg);
+    } else {
+      return replyMsg(env, uid, cid, userErrorMsg);
+    }
+  }
+}
+
+
+
 // ==================== Surge 格式行解析 ====================
 
 function parseSurgeLines(text) {
@@ -1264,31 +1311,33 @@ async function onMsg(msg, env) {
   }
 
   // ===== 非收集模式 =====
-  const ttl = u.ttl !== undefined ? u.ttl : 0;
+  return await safeExecute(async () => {
+    const ttl = u.ttl !== undefined ? u.ttl : 0;
 
-  // 所有文本 → 直接保存为文本短链，不解析
-  const preview = content.length > 50 ? content.slice(0, 50) + '...' : content;
-  const { id, url: clipUrl } = await saveToClipAndTrack(content, ttl, env, uid, {
-    preview: '\u{1F4C4} ' + preview, nodeCount: 0, source: 'text',
-    burn: u?._burn || false,
-    landing: u?._landing || false,
-  }, getEffectiveMaxAccess(u));
-  const previewShow = content.length > 150 ? content.slice(0, 150) + '...' : content;
-  const ttlT = formatTtlLabel(ttl);
-  const accT = getEffectiveMaxAccess(u) === 0 ? '' : '\n\u{1F4CA} ' + getEffectiveMaxAccess(u) + ' IP';
-  u._lastContent = content;
-  u._lastRawContent = content;
-  u._lastSubInput = content;
+    // 所有文本 → 直接保存为文本短链，不解析
+    const preview = content.length > 50 ? content.slice(0, 50) + '...' : content;
+    const { id, url: clipUrl } = await saveToClipAndTrack(content, ttl, env, uid, {
+      preview: '\u{1F4C4} ' + preview, nodeCount: 0, source: 'text',
+      burn: u?._burn || false,
+      landing: u?._landing || false,
+    }, getEffectiveMaxAccess(u));
+    const previewShow = content.length > 150 ? content.slice(0, 150) + '...' : content;
+    const ttlT = formatTtlLabel(ttl);
+    const accT = getEffectiveMaxAccess(u) === 0 ? '' : '\n\u{1F4CA} ' + getEffectiveMaxAccess(u) + ' IP';
+    u._lastContent = content;
+    u._lastRawContent = content;
+    u._lastSubInput = content;
 
-  const resultText =
-    '\u{1F4E6} <b>\u68C0\u6D4B\u5230\u6587\u672C\u8F93\u5165</b>\n\n' +
-    '\u{1F517} \u5DF2\u751F\u6210\u77ED\u94FE\uFF1A\n<code>' + clipUrl + '</code>\n\n' +
-    '\u{1F4CB} \u9884\u89C8\uFF1A\n<code>' + escapeHTML(previewShow) + '</code>\n\n' +
-    '\u23F1 ' + ttlT + accT + '\n\n' +
-    '\u{1F4A1} \u5982\u9700\u89E3\u6790\u8BA2\u9605\uFF0C\u8BF7\u4F7F\u7528\u4E3B\u9875\u7684\u300C\u8BA2\u9605\u300D\u6309\u94AE\u5BFC\u5165\u8BA2\u9605\u94FE\u63A5';
+    const resultText =
+      '\u{1F4E6} <b>\u68C0\u6D4B\u5230\u6587\u672C\u8F93\u5165</b>\n\n' +
+      '\u{1F517} \u5DF2\u751F\u6210\u77ED\u94FE\uFF1A\n<code>' + clipUrl + '</code>\n\n' +
+      '\u{1F4CB} \u9884\u89C8\uFF1A\n<code>' + escapeHTML(previewShow) + '</code>\n\n' +
+      '\u23F1 ' + ttlT + accT + '\n\n' +
+      '\u{1F4A1} \u5982\u9700\u89E3\u6790\u8BA2\u9605\uFF0C\u8BF7\u4F7F\u7528\u4E3B\u9875\u7684\u300C\u8BA2\u9605\u300D\u6309\u94AE\u5BFC\u5165\u8BA2\u9605\u94FE\u63A5';
 
-  // 编辑主页消息显示结果，编辑失败则发送新消息
-  return replyMsg(env, uid, cid, resultText);
+    // 编辑主页消息显示结果，编辑失败则发送新消息
+    return replyMsg(env, uid, cid, resultText);
+  }, env, uid, cid, null, '文本保存');
 
 }
 
