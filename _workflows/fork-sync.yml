@@ -47,12 +47,10 @@ jobs:
           cp -r .github/workflows/* /tmp/wfbak/ 2>/dev/null || true
           cp wrangler.toml /tmp/wfbak/ 2>/dev/null || true
 
-          # 硬重置到 origin + 合并上游
+          # 强制覆盖所有文件为上游版本（比 merge 可靠，不会残留本地改动）
           git checkout main
           git reset --hard origin/main
-          git merge upstream/main --allow-unrelated-histories --no-commit -X theirs || true
-          # 仍有冲突的用上游版本
-          git checkout --theirs -- . 2>/dev/null || true
+          git checkout upstream/main -- .
 
           # 恢复本地配置（先删掉上游新增的 workflow 文件）
           rm -rf .github/workflows
@@ -61,7 +59,10 @@ jobs:
           cp /tmp/wfbak/wrangler.toml . 2>/dev/null || true
           rm -rf /tmp/wfbak
 
-          git commit --no-edit
+          # 排除 workflow 文件变更（GITHUB_TOKEN 无 workflows 写权限）
+          git reset HEAD .github/workflows/ 2>/dev/null || true
+          # 只在有变更时 commit（失败也不阻断）
+          git diff --cached --quiet || git commit --no-edit || true
           git push origin main
           echo "changed=true" >> $GITHUB_OUTPUT
 
