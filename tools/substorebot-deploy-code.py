@@ -11,7 +11,10 @@ if not ACCOUNT or not TOKEN or not NAME:
 
 BASE = f'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/{NAME}'
 
-meta = json.dumps({'main_module': 'worker.mjs'})
+meta = json.dumps({
+    'main_module': 'worker.mjs',
+    'keep_bindings': ['kv_namespaces', 'vars', 'secrets', 'services'],
+})
 files = (
     ('metadata', ('meta.json', meta, 'application/json')),
     ('worker.mjs', ('worker.mjs', open(f'{DIR}/worker.mjs', 'rb'), 'application/javascript+module')),
@@ -20,7 +23,7 @@ files = (
 r = requests.put(f'{BASE}/content', files=files, headers={'Authorization': f'Bearer {TOKEN}'})
 result = r.json()
 if result.get('success'):
-    print('Deploy OK — 代码已更新')
+    print('Deploy OK — 代码已更新，变量已保留')
 else:
     print('FAILED:', json.dumps(result.get('errors', ''), indent=2)[:500])
     sys.exit(1)

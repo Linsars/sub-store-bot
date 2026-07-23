@@ -6,7 +6,10 @@ NAME = os.getenv("CF_WORKER_NAME", "sub-store-bot")
 
 BASE = f"https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/workers/scripts/{NAME}"
 
-meta = json.dumps({"main_module": "worker.mjs"})
+meta = json.dumps({
+    "main_module": "worker.mjs",
+    "keep_bindings": ["kv_namespaces", "vars", "secrets", "services"],
+})
 parts = (
     ("metadata", ("metadata.json", meta, "application/json")),
     ("worker.mjs", ("worker.mjs", open("worker.mjs", "rb"), "application/javascript+module")),
