@@ -47,10 +47,11 @@ jobs:
           cp -r .github/workflows/* /tmp/wfbak/ 2>/dev/null || true
           cp wrangler.toml /tmp/wfbak/ 2>/dev/null || true
 
-          # 强制覆盖所有文件为上游版本（比 merge 可靠，不会残留本地改动）
+          # 强制覆盖所有文件为上游版本
           git checkout main
           git reset --hard origin/main
           git checkout upstream/main -- .
+          git add -A
 
           # 恢复本地配置（先删掉上游新增的 workflow 文件）
           rm -rf .github/workflows
