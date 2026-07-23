@@ -17,15 +17,15 @@ bindings = []
 compat_date = ''
 compat_flags = []
 try:
-    r = requests.get(BASE, headers=HEADERS)
+    r = requests.get(f'{BASE}/settings', headers=HEADERS)
     if r.status_code == 200 and r.text.strip():
-        existing = r.json().get('result', {})
-        bindings = existing.get('bindings', [])
-        compat_date = existing.get('compatibility_date', '')
-        compat_flags = existing.get('compatibility_flags', [])
+        result = r.json().get('result', {})
+        bindings = result.get('bindings', [])
+        compat_date = result.get('compatibility_date', '')
+        compat_flags = result.get('compatibility_flags', [])
         print(f'Found {len(bindings)} existing binding(s)')
     else:
-        print(f'No existing script (HTTP {r.status_code}), fresh deploy')
+        print(f'No existing settings (HTTP {r.status_code}), fresh deploy')
 except Exception as e:
     print(f'Warning: could not fetch existing bindings: {e}')
 
