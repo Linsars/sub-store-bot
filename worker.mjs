@@ -2491,17 +2491,21 @@ async function cb_tmpl_edit(env, uid, cid, mid, u, d, q) {
 }
 
 async function cb_tmpl_select_b(env, uid, cid, mid, u, d, q) {
-  const idx = parseInt(d.split(':')[1]);
-  // 内置模板：清除用户模板的 active 标志
+  const builtinId = d.split(':')[1];
+  // 清除用户模板 active
   let templates = [];
   try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
   templates.forEach(t => t.active = false);
   await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
+  // 存储内置模板选择
+  await env.KV.put('tmpl_active:' + uid, builtinId);
   return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
 }
 
 async function cb_tmpl_select_u(env, uid, cid, mid, u, d, q) {
   const idx = parseInt(d.split(':')[1]);
+  // 清除内置模板选择
+  await env.KV.delete('tmpl_active:' + uid);
   let templates = [];
   try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
   templates.forEach((t, i) => t.active = (i === idx));
