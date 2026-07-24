@@ -2253,6 +2253,35 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
         }
         return lines.join('\n');
       }).join('\n');
+      // 智能模板替换：找到 proxies: 段，替换其中的节点内容
+      let templates = [];
+      try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+      const activeTmpl = templates.find(t => t.active);
+      if (activeTmpl && activeTmpl.text) {
+        try {
+          let tmplText = activeTmpl.text;
+          if (tmplText === '__NOOM__') {
+            const resp = await fetch('https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/noom.ini');
+            if (resp.ok) tmplText = await resp.text();
+          }
+          if (tmplText && tmplText.includes('proxies:')) {
+            const tmplLines = tmplText.split('\n');
+            let proxiesStart = -1;
+            let proxiesEnd = tmplLines.length;
+            for (let i = 0; i < tmplLines.length; i++) {
+              if (/^proxies:\s*$/.test(tmplLines[i])) { proxiesStart = i; continue; }
+              if (proxiesStart >= 0 && /^\w/.test(tmplLines[i]) && !/^\s/.test(tmplLines[i])) {
+                proxiesEnd = i;
+                break;
+              }
+            }
+            if (proxiesStart >= 0) {
+              tmplLines.splice(proxiesStart + 1, proxiesEnd - proxiesStart - 1, ...output.split('\n'));
+              output = tmplLines.join('\n');
+            }
+          }
+        } catch {}
+      }
     } else {
       // Sub 引擎产出（Surge 特殊处理 WG）
       const surgeWg = proxiesForConvert.filter(p => p.type === 'wireguard');
