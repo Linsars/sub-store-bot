@@ -1444,6 +1444,8 @@ async function onCb(q, env) {
     if (d === 'tmpl_menu') return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
     if (d === 'tmpl_edit') return cb_tmpl_edit(env, uid, cid, mid, u, d, q);
     if (d === 'tmpl_reset') return cb_tmpl_reset(env, uid, cid, mid, u, d, q);
+    if (d === 'tmpl_builtin_default') return cb_tmpl_builtin_default(env, uid, cid, mid, u, d, q);
+    if (d === 'tmpl_builtin_noom') return cb_tmpl_builtin_noom(env, uid, cid, mid, u, d, q);
   }
   if (d.startsWith('conv_fmt:')) return cb_conv_fmt(env, uid, cid, mid, u, d, q);
 }
@@ -2386,6 +2388,26 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
   let current = null;
   try { current = await env.KV.get('tmpl:' + uid); } catch {}
+  const hasCustom = !!current;
+  let currentName = '\u5185\u7F6E Clash';
+  if (hasCustom) {
+    try { currentName = JSON.parse(current).name || '\u81EA\u5B9A\u4E49'; } catch { currentName = '\u81EA\u5B9A\u4E49'; }
+  }
+  const text = '\u{1F4DD} <b>YAML \u6A21\u677F\u7BA1\u7406</b>\n\n' +
+    '\u5F53\u524D\u4F7F\u7528\uFF1A<b>' + currentName + '</b>' +
+    '\n\n\u9009\u62E9\u5185\u7F6E\u6A21\u677F\u6216\u81EA\u5B9A\u4E49\uFF1A';
+  const kb = {
+    inline_keyboard: [
+      [{ text: '\u{1F4CB} \u5185\u7F6E Clash YAML', callback_data: 'tmpl_builtin_default' }],
+      [{ text: '\u{1F30D} NooM \u89C4\u5219\u96C6', callback_data: 'tmpl_builtin_noom' }],
+      [{ text: '\u270F\uFE0F \u81EA\u5B9A\u4E49\u6A21\u677F', callback_data: 'tmpl_edit' }],
+      [{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }],
+    ]
+  };
+  return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text, parse_mode: 'HTML', reply_markup: kb });
+}sync function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
+  let current = null;
+  try { current = await env.KV.get('tmpl:' + uid); } catch {}
   const hasTmpl = !!current;
   const text = '\u{1F4DD} <b>YAML \u6A21\u677F\u7BA1\u7406</b>\n\n' +
     (hasTmpl ? '\u2705 \u5DF2\u8BBE\u7F6E\u81EA\u5B9A\u4E49\u6A21\u677F\n\u70B9\u300C\u7F16\u8F91\u300D\u4FEE\u6539\uFF0C\u70B9\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u6E05\u9664' : '\u26AA \u672A\u8BBE\u7F6E\uFF0C\u5C06\u4F7F\u7528\u5185\u7F6E Clash \u683C\u5F0F') +
@@ -2415,6 +2437,40 @@ async function cb_tmpl_edit(env, uid, cid, mid, u, d, q) {
 async function cb_tmpl_reset(env, uid, cid, mid, u, d, q) {
   await env.KV.delete('tmpl:' + uid).catch(() => {});
   return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
+}
+
+
+
+async function cb_tmpl_builtin_default(env, uid, cid, mid, u, d, q) {
+  await env.KV.delete('tmpl:' + uid).catch(() => {});
+  return tg('editMessageText', env.BOT_TOKEN, {
+    chat_id: cid, message_id: mid,
+    text: '\u2705 \u5DF2\u5207\u6362\u5230 <b>\u5185\u7F6E Clash YAML</b>',
+    parse_mode: 'HTML',
+    reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u7BA1\u7406', callback_data: 'tmpl_menu' }]] },
+  });
+}
+
+async function cb_tmpl_builtin_noom(env, uid, cid, mid, u, d, q) {
+  let noomText = '';
+  try {
+    const resp = await fetch('https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/noom.ini');
+    if (resp.ok) noomText = await resp.text();
+  } catch {}
+  if (!noomText) {
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid, message_id: mid,
+      text: '\u274C \u65E0\u6CD5\u52A0\u8F7D NooM \u6A21\u677F',
+      reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE', callback_data: 'tmpl_menu' }]] },
+    });
+  }
+  await env.KV.put('tmpl:' + uid, JSON.stringify({ name: 'NooM', text: noomText }));
+  return tg('editMessageText', env.BOT_TOKEN, {
+    chat_id: cid, message_id: mid,
+    text: '\u2705 \u5DF2\u5207\u6362\u5230 <b>NooM \u89C4\u5219\u96C6</b>\n\u5305\u542B\u5B8C\u6574 DNS/Rule \u914D\u7F6E',
+    parse_mode: 'HTML',
+    reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u7BA1\u7406', callback_data: 'tmpl_menu' }]] },
+  });
 }
 
 
