@@ -768,7 +768,7 @@ async function replyOrEdit(u, cid, env, opts) {
     try {
       const raw = await env.KV.get('prompt:' + (u._uid || ''), { type: 'json' });
       if (raw && raw.cid && raw.mid) { pCid = raw.cid; pMid = raw.mid; }
-    } catch {}
+    } catch(e) {}
   }
   if (pCid && pMid) {
     const r = await tg('editMessageText', env.BOT_TOKEN, {
@@ -1048,7 +1048,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
                 bestUa = r.value.ua;
                 bestParsed = parsed;
               }
-            } catch {}
+            } catch(e) {}
           }
         }
         if (!bestText) {
@@ -1217,16 +1217,16 @@ async function onMsg(msg, env) {
           const urlParts = input.split('/');
           tmplName = urlParts[urlParts.length - 1].replace(/\.[^.]+$/, '') || 'URL 导入';
         }
-      } catch {}
+      } catch(e) {}
     }
     // 尝试从 JSON 提取名称
     try {
       const parsed = JSON.parse(tmplText);
       if (parsed.name) tmplName = parsed.name;
       if (parsed.text) tmplText = parsed.text;
-    } catch {}
+    } catch(e) {}
     let templates = [];
-    try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+    try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
     templates.push({ name: tmplName, text: tmplText, active: false });
     const parsed = parseTemplate(tmplText);
     tmplText = JSON.stringify({ name: tmplName, prefix: parsed.prefix || '', suffix: parsed.suffix || '', proxyKeys: parsed.proxyKeys || [] });
@@ -1617,7 +1617,7 @@ async function cb_my_links(env, uid, cid, mid, u, d, q) {
         try {
           const raw = await env.KV.get('share_' + l.id, { type: 'json' });
           if (!raw) icon = '\u26AB';
-        } catch {}
+        } catch(e) {}
       }
       const label = l.remark ? icon + ' ' + escapeHTML(l.remark) : icon + ' ' + escapeHTML(l.preview);
       rows.push([{ text: label, callback_data: 'link_' + l.id }]);
@@ -1661,7 +1661,7 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
         accessedCount = Array.isArray(raw.accessedIPs) ? raw.accessedIPs.length : 0;
         accessedLimit = raw.maxAccess || l.maxAccess || 0;
       }
-    } catch {}
+    } catch(e) {}
 
     // 确定生死：KV 被删 = 已消耗阅后即焚/超限
     const isConsumed = !kvAlive && (l.maxAccess > 0 || l.burn);
@@ -2130,7 +2130,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       if (!rawText) {
         // 兜底：从 parsed proxies 拼接
         let std = '';
-        try { std = ProxyUtils.produce(proxiesForConvert, 'uri'); } catch {}
+        try { std = ProxyUtils.produce(proxiesForConvert, 'uri'); } catch(e) {}
         const gostRaw = u._gostInput || '';
         rawText = btoa(unescape(encodeURIComponent([std, gostRaw].filter(Boolean).join('\n'))));
       }
@@ -2188,11 +2188,11 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       }).join('\n');
       // 智能模板替换：找到 proxies: 段，替换其中的节点内容
       let templates = [];
-      try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+      try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
       let activeTmpl = templates.find(t => t.active);
       if (!activeTmpl) {
         let builtinIdx = 0;
-        try { builtinIdx = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch {}
+        try { builtinIdx = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch(e) {}
         if (builtinIdx === 1) activeTmpl = { text: '__NOOM__' };
       }
       if (activeTmpl && activeTmpl.text) {
@@ -2239,7 +2239,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
               output = tmplLines.join('\n');
             }
           }
-        } catch {}
+        } catch(e) {}
       }
     } else {
       // Sub 引擎产出（Surge 特殊处理 WG）
@@ -2330,7 +2330,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       const nonWgCount = proxiesForConvert.filter(p => p.type !== 'wireguard').length;
       if ((fmt === 'surge' || fmt === 'surfboard') && surgeWgAll.length > 0 && output && nonWgCount > 0) {
         let wgYaml;
-        try { wgYaml = ProxyUtils.produce(surgeWgAll, 'clashmeta'); } catch {}
+        try { wgYaml = ProxyUtils.produce(surgeWgAll, 'clashmeta'); } catch(e) {}
         if (!wgYaml) wgYaml = 'proxies:\n' + surgeWgAll.map(p => '  - {name: "' + p.name + '", type: wireguard, server: ' + p.server + '}').join('\n');
         const { url: wgUrl } = await saveToClipAndTrack(String(wgYaml), getEffectiveTtl(u), env, uid, {
           preview: 'WireGuard × ' + surgeWgAll.length + ' (原生 YAML)', nodeCount: surgeWgAll.length, source: 'wg',
@@ -2344,7 +2344,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       const ss2022Nodes = proxiesForConvert.filter(p => p.type === 'ss' && isSs2022Cipher(p.cipher));
       if (ss2022Nodes.length > 0 && fmt !== 'clashmeta' && fmt !== 'native' && fmt !== 'b64') {
         let ss2022Yaml;
-        try { ss2022Yaml = ProxyUtils.produce(ss2022Nodes, 'clashmeta'); } catch {}
+        try { ss2022Yaml = ProxyUtils.produce(ss2022Nodes, 'clashmeta'); } catch(e) {}
         if (!ss2022Yaml) ss2022Yaml = 'proxies:\n' + ss2022Nodes.map(p => '  - {name: "' + p.name + '", type: ss, server: ' + p.server + ', cipher: ' + p.cipher + '}').join('\n');
         const { url: ss2022Url } = await saveToClipAndTrack(String(ss2022Yaml), getEffectiveTtl(u), env, uid, {
           preview: 'SS2022 × ' + ss2022Nodes.length + ' (自定 YAML)', nodeCount: ss2022Nodes.length, source: 'ss2022',
@@ -2395,7 +2395,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
 async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
   let templates = [];
-  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
   // 加入内置模板
   const builtins = [
     { name: '内置 Clash YAML', text: '__BUILTIN__', builtin: true },
@@ -2403,7 +2403,7 @@ async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
   ];
   const all = [...builtins, ...templates];
   let builtinActive = 0;
-  try { builtinActive = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch {}
+  try { builtinActive = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch(e) {}
   const activeIdx = templates.findIndex(t => t.active);
   const lines = ['\u{1F4DD} <b>YAML 模板管理</b>', ''];
   const rows = [];
@@ -2447,7 +2447,7 @@ async function cb_tmpl_select_b(env, uid, cid, mid, u, d, q) {
   const builtinId = d.split(':')[1];
   // 清除用户模板 active
   let templates = [];
-  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
   templates.forEach(t => t.active = false);
   await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
   // 存储内置模板选择
@@ -2460,7 +2460,7 @@ async function cb_tmpl_select_u(env, uid, cid, mid, u, d, q) {
   // 清除内置模板选择
   await env.KV.delete('tmpl_active:' + uid);
   let templates = [];
-  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
   templates.forEach((t, i) => t.active = (i === idx));
   await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
   return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
@@ -2469,7 +2469,7 @@ async function cb_tmpl_select_u(env, uid, cid, mid, u, d, q) {
 async function cb_tmpl_del(env, uid, cid, mid, u, d, q) {
   const idx = parseInt(d.split(':')[1]);
   let templates = [];
-  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
   templates.splice(idx, 1);
   await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
   return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
@@ -2524,7 +2524,7 @@ export default {
       const r = await fetch(target, { headers: { 'User-Agent': 'Karing' } });
       const text = await r.text();
       let count = 0;
-      try { const parsed = ProxyUtils.parse(text); count = parsed?.length || 0; } catch {}
+      try { const parsed = ProxyUtils.parse(text); count = parsed?.length || 0; } catch(e) {}
       return new Response(JSON.stringify({ status: r.status, len: text.length, count }), { headers: { 'Content-Type': 'application/json', ...cors } });
     }
 
@@ -2589,12 +2589,12 @@ export default {
             'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/index.html';
           const allowedHosts = ['raw.githubusercontent.com', 'github.com', 'github.githubassets.com'];
           let urlOk = false;
-          try { const u = new URL(LANDING_HTML_URL); urlOk = allowedHosts.includes(u.hostname); } catch {}
+          try { const u = new URL(LANDING_HTML_URL); urlOk = allowedHosts.includes(u.hostname); } catch(e) {}
           if (urlOk) {
             try {
               const ghResp = await fetch(LANDING_HTML_URL);
               if (ghResp.ok) { html = await ghResp.text(); await env.KV.put('_landing_v1', html, { expirationTtl: 86400 }); }
-            } catch {}
+            } catch(e) {}
           }
           if (!html) html = '<html><body><h1>Service Unavailable</h1></body></html>';
         }
