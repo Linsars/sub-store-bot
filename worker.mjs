@@ -1480,11 +1480,11 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
           gostInput += (gostInput ? '\n' : '') + gostParts.join('\n');
         }
         if (restParts.trim().length > 0) {
-          const parsed = parseProxies(restParts);
+          const parsed = parseProxies(restParts).proxies;
           if (parsed && parsed.length > 0) proxies.push(...parsed);
         }
       } else {
-        let parseResult = parseProxies(content); let parsed = parseResult.proxies; _parseDebug = parseResult.debug;
+        let parseResult = parseProxies(content); let parsed = parseResult.proxies; _parseDebug += parseResult.debug + "; ";
         if (parsed && parsed.length > 0) proxies.push(...parsed);
       }
     }
