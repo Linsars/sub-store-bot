@@ -157,94 +157,60 @@ function parseProxies(text) {
 }
 
 function parseProxiesWithSurge(text, skipSurge) {
-  const debug = [];
-  debug.push("textLen=" + text.length);
-  debug.push("first100=" + text.substring(0, 100).replace(/\n/g, "|"));
-  debug.push("hasProxies=" + text.includes("proxies:"));
-  // Check for BOM or null bytes
-  debug.push("hasBOM=" + (text.charCodeAt(0) === 0xFEFF));
-  debug.push("nullBytes=" + (text.match(/\0/g) || []).length);
-  debug.push("proxiesIdx=" + text.indexOf("\nproxies:"));
   if (!skipSurge) {
     const { proxies: surge } = parseSurgeLines(text);
-    debug.push("surge=" + surge.length);
-    if (surge.length > 0) return { proxies: surge, debug: debug.join(", ") };
+    if (surge.length > 0) return surge;
   }
-  try {
-    // Try each preprocessor
-    let preprocessors = [];
-    try {
-      const p = ProxyUtils._preprocessors || ProxyUtils.preprocessors;
-      if (p) preprocessors = Object.keys(p);
-    } catch(e) {}
-    debug.push("preprocessors=" + preprocessors.join("|"));
-    
-    // Try raw parse
-    try {
-      const r = ProxyUtils.parse(text);
-      debug.push("engine_type=" + typeof r);
-      debug.push("engine_isArray=" + Array.isArray(r));
-      debug.push("engine_len=" + (r ? r.length : "null"));
-      if (r && r.length > 0) return { proxies: r, debug: debug.join(", ") };
-      // Check if it returns object with proxies key
-      if (r && r.proxies) {
-        debug.push("engine_proxies_key=" + r.proxies.length);
-        return { proxies: r.proxies, debug: debug.join(", ") };
-      }
-    } catch (e) {
-      debug.push("engine_err=" + e.message);
-      debug.push("engine_stack=" + (e.stack || "").substring(0, 200));
+  // ProxyUtils.parse
+  try { const r = ProxyUtils.parse(text); if (r && r.length > 0) return r; } catch {}
+  // Fallback: simple YAML proxies extractor
+  try { const y = parseClashYamlSimple(text); if (y.length > 0) return y; } catch {}
+  return [];
+}
+
+// Simple Clash YAML proxies extractor - handles standard 2/4-space indented YAML
+function parseClashYamlSimple(text) {
+  const proxies = [];
+  const idx = text.indexOf('\nproxies:');
+  if (idx === -1) return proxies;
+  let rest = text.slice(idx + 11); // skip "\nproxies:\n"
+  // Find all "- name:" entries
+  const nameRe = /^\s{2,4}- name: (.+)$/gm;
+  let m;
+  const entries = [];
+  while ((m = nameRe.exec(rest)) !== null) {
+    entries.push({ start: m.index, name: m[1].trim().replace(/^['"]|['"]$/g, '') });
+  }
+  for (let i = 0; i < entries.length; i++) {
+    const start = entries[i].start;
+    const end = i + 1 < entries.length ? entries[i + 1].start : rest.indexOf('\nproxy-groups:');
+    const block = rest.slice(start, end > 0 ? end : undefined);
+    const proxy = { name: entries[i].name, type: '', server: '', port: 0 };
+    const fieldRe = /^\s{4,6}([\w-]+):\s*(.+)$/gm;
+    let fm;
+    while ((fm = fieldRe.exec(block)) !== null) {
+      const k = fm[1];
+      let v = fm[2].trim().replace(/^['"]|['"]$/g, '');
+      if (k === 'type') proxy.type = v;
+      else if (k === 'server') proxy.server = v;
+      else if (k === 'port') proxy.port = parseInt(v, 10) || 0;
+      else if (k === 'password') proxy.password = v;
+      else if (k === 'uuid') proxy.uuid = v;
+      else if (k === 'cipher') proxy.cipher = v;
+      else if (k === 'sni' || k === 'servername') proxy.sni = v;
+      else if (k === 'network') proxy.network = v;
+      else if (k === 'tls') proxy.tls = v === 'true';
+      else if (k === 'udp') proxy.udp = v === 'true';
+      else if (k === 'skip-cert-verify') proxy['skip-cert-verify'] = v === 'true';
+      else if (k === 'alpn') proxy.alpn = v.split(',').map(s => s.trim());
+      else if (k === 'flow') proxy.flow = v;
+      else if (k === 'client-fingerprint') proxy['client-fingerprint'] = v;
+      else proxy[k] = v;
     }
-    debug.push("engine=" + (r ? r.length : "null"));
-    if (r && r.length > 0) return { proxies: r, debug: debug.join(", ") };
-  } catch (e) {
-    debug.push("engine_err=" + e.message);
-    return { proxies: [], debug: debug.join(", ") };
+    if (proxy.type && proxy.server && proxy.port) proxies.push(proxy);
   }
-  return { proxies: [], debug: debug.join(", ") };
+  return proxies;
 }
-
-// ==================== 国家旗帜 ====================
-
-function addFlag(name) {
-  name = String(name || '').trim() || '未命名';
-  if (/[\u{1F1E6}-\u{1F1FF}]{2}/u.test(name)) return name;
-  const rules = [
-    [/(\b|[^A-Za-z])(HK|Hong Kong|香港|深港|广港|沪港)(\b|[^A-Za-z])/i, '\u{1F1ED}\u{1F1F0}'],
-    [/(\b|[^A-Za-z])(TW|Taiwan|台湾|台灣|台北|新北|广台)(\b|[^A-Za-z])/i, '\u{1F1F9}\u{1F1FC}'],
-    [/(\b|[^A-Za-z])(JP|Japan|日本|东京|大阪|埼玉|广日)(\b|[^A-Za-z])/i, '\u{1F1EF}\u{1F1F5}'],
-    [/(\b|[^A-Za-z])(SG|Singapore|新加坡|狮城|广新)(\b|[^A-Za-z])/i, '\u{1F1F8}\u{1F1EC}'],
-    [/(\b|[^A-Za-z])(KR|Korea|韩国|首尔|春川|广韩)(\b|[^A-Za-z])/i, '\u{1F1F0}\u{1F1F7}'],
-    [/(\b|[^A-Za-z])(US|America|United States|美国|洛杉矶|圣何塞|纽约|西雅图|芝加哥|波特兰|达拉斯|广美)(\b|[^A-Za-z])/i, '\u{1F1FA}\u{1F1F8}'],
-    [/(\b|[^A-Za-z])(UK|Britain|英国|伦敦)(\b|[^A-Za-z])/i, '\u{1F1EC}\u{1F1E7}'],
-    [/(\b|[^A-Za-z])(FR|France|法国|巴黎)(\b|[^A-Za-z])/i, '\u{1F1EB}\u{1F1F7}'],
-    [/(\b|[^A-Za-z])(DE|Germany|德国|法兰克福)(\b|[^A-Za-z])/i, '\u{1F1E9}\u{1F1EA}'],
-    [/(\b|[^A-Za-z])(NL|Netherlands|荷兰|阿姆斯特丹)(\b|[^A-Za-z])/i, '\u{1F1F3}\u{1F1F1}'],
-    [/(\b|[^A-Za-z])(RU|Russia|俄罗斯|莫斯科)(\b|[^A-Za-z])/i, '\u{1F1F7}\u{1F1FA}'],
-    [/(\b|[^A-Za-z])(IN|India|印度|孟买)(\b|[^A-Za-z])/i, '\u{1F1EE}\u{1F1F3}'],
-    [/(\b|[^A-Za-z])(AU|Australia|澳大利亚|悉尼)(\b|[^A-Za-z])/i, '\u{1F1E6}\u{1F1FA}'],
-    [/(\b|[^A-Za-z])(CA|Canada|加拿大|蒙特利尔)(\b|[^A-Za-z])/i, '\u{1F1E8}\u{1F1E6}'],
-  ];
-  for (const [r, f] of rules) if (r.test(name)) return f + ' ' + name;
-  return name;
-}
-
-function isSs2022Cipher(cipher) {
-  const c = String(cipher || '').trim().toLowerCase();
-  return ['2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm', '2022-blake3-chacha20-poly1305'].includes(c);
-}
-
-// ==================== 本地订阅收集系统 ====================
-
-function collectionText(collection) {
-  const items = collection?.items || [];
-  const mode = collection?.mode || 'file';
-  let lines = ['\u{1F4C1} ' + (mode === 'url' ? '远程订阅收集' : '本地订阅') + '  \u26A0\uFE0F 数据临时有效，请尽快处理', ''];
-  lines.push('\u{1F4CA} 已收集: ' + items.length + ' \u6761');
-  if (items.length === 0) {
-    lines.push('');
-    lines.push(mode === 'url' ? '请发送订阅链接' : '请发送节点文件或粘贴订阅内容');
-  } else {
     lines.push('');
     items.forEach((item, i) => {
       const prefix = (i + 1) + '.\u3000';
