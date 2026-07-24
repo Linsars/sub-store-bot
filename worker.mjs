@@ -1278,7 +1278,8 @@ async function onMsg(msg, env) {
       try {
         const resp = await fetch(input);
         if (resp.ok) {
-          tmplText = cleanTemplate(await resp.text());
+          const noomParsed = parseTemplate(await resp.text());
+      tmplText = JSON.stringify({ name: 'NooM', prefix: noomParsed.prefix || '', suffix: noomParsed.suffix || '', proxyKeys: noomParsed.proxyKeys || [] });
           // 从 URL 提取模板名
           const urlParts = input.split('/');
           tmplName = urlParts[urlParts.length - 1].replace(/\.[^.]+$/, '') || 'URL 导入';
@@ -1294,7 +1295,8 @@ async function onMsg(msg, env) {
     let templates = [];
     try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
     templates.push({ name: tmplName, text: tmplText, active: false });
-    tmplText = cleanTemplate(tmplText);
+    const parsed = parseTemplate(tmplText);
+    tmplText = JSON.stringify({ name: tmplName, prefix: parsed.prefix || '', suffix: parsed.suffix || '', proxyKeys: parsed.proxyKeys || [] });
     await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
     return replyMsg(env, uid, cid, '✅ 模板已添加：' + tmplName + '\n去 YAML 模板管理切换', mainKb());
   }
@@ -2518,50 +2520,34 @@ async function cb_tmpl_del(env, uid, cid, mid, u, d, q) {
 
 
 
-function cleanTemplate(tmplText) {
-  if (!tmplText || !tmplText.includes('proxies:')) return tmplText;
+function parseTemplate(tmplText) {
+  if (!tmplText || !tmplText.includes('proxies:')) return { raw: tmplText };
   const lines = tmplText.split('\n');
-  const result = [];
   let proxiesStart = -1;
-  let firstProxyIndent = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^proxies:\s*$/.test(line)) {
-      proxiesStart = i;
-      result.push(line);
-      continue;
-    }
-    if (proxiesStart >= 0 && firstProxyIndent < 0) {
-      if (/^\s+- name:/.test(line)) {
-        firstProxyIndent = line.search(/[^ ]/);
-        result.push('  # 节点参数模板：');
-        result.push('  - name: 示例节点');
-        for (let j = proxiesStart + 1; j < lines.length; j++) {
-          const l = lines[j];
-          if (!l || /^\s*$/.test(l)) continue;
-          const indent = l.search(/[^ ]/);
-          if (indent <= firstProxyIndent && (/^\s+- name:/.test(l) || /^\w/.test(l.trimStart()))) break;
-          if (indent === firstProxyIndent + 2) {
-            result.push('    ' + l.trimStart().split(':')[0] + ':');
-          }
-        }
-        break;
-      }
-      if (/^\w/.test(line.trimStart()) && !/^\s/.test(line)) break;
-    }
-    result.push(line);
-  }
   let proxiesEnd = lines.length;
-  if (firstProxyIndent >= 0) {
-    for (let i = proxiesStart + 1; i < lines.length; i++) {
-      const l = lines[i];
-      if (!l || /^\s*$/.test(l)) continue;
-      if (/^\s+- name:/.test(l)) { proxiesEnd = i; break; }
-      if (/^\w/.test(l.trimStart()) && l.search(/[^ ]/) <= firstProxyIndent) { proxiesEnd = i; break; }
+  for (let i = 0; i < lines.length; i++) {
+    if (/^proxies:\s*$/.test(lines[i])) { proxiesStart = i; continue; }
+    if (proxiesStart >= 0 && /^[\w-]/.test(lines[i]) && !/^\s/.test(lines[i])) {
+      proxiesEnd = i; break;
     }
-    for (let i = proxiesEnd; i < lines.length; i++) result.push(lines[i]);
   }
-  return result.join('\n');
+  const prefix = lines.slice(0, proxiesStart).join('\n');
+  const suffix = lines.slice(proxiesEnd).join('\n');
+  // 提取代理参数模板（第一个代理的字段名）
+  const proxyKeys = [];
+  if (proxiesStart >= 0) {
+    let inFirstProxy = false;
+    for (let i = proxiesStart + 1; i < proxiesEnd; i++) {
+      const l = lines[i];
+      if (/^\s+- name:/.test(l)) { inFirstProxy = true; continue; }
+      if (inFirstProxy && /^\s{4}[\w-]+:/.test(l)) {
+        const key = l.trim().split(':')[0];
+        if (key !== 'name') proxyKeys.push(key);
+      }
+      if (inFirstProxy && (/^\s+- name:/.test(l) || (/^\w/.test(l.trimStart()) && !/^\s/.test(l)))) break;
+    }
+  }
+  return { prefix, suffix, proxyKeys };
 }
 
 
