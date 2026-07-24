@@ -161,14 +161,12 @@ function parseProxiesWithSurge(text, skipSurge) {
     const { proxies: surge } = parseSurgeLines(text);
     if (surge.length > 0) return surge;
   }
-  // parseClashYaml 优先（快 20-30 倍，CF Workers 10s 限制必须）
-  try { const y = parseClashYaml(text); if (y.length > 0) return y; } catch {}
+
   // ProxyUtils.parse 兜底（慢但全，处理非 YAML 格式）
   try { const r = ProxyUtils.parse(text); if (r && r.length > 0) return r; } catch {}
   return [];
 }
 
-function parseClashYaml(text) {
   const proxies = [];
   const proxyIdx = text.indexOf('\nproxies:');
   if (proxyIdx === -1) return proxies;
