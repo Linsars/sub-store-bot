@@ -1513,7 +1513,19 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
           reply_markup: fmtKb(null, null, null, u),
         });
       }
-      return editMsg(env, cid, mid, '\u274C 无法从收集的内容中解析出任何节点');
+      // DEBUG: show what went wrong
+      let debugInfo = 'mode=' + mode + ', items=' + items.length;
+      for (const item of items) {
+        const c = item.content || '';
+        debugInfo += ', contentLen=' + c.length;
+        // Check if it has proxies section
+        debugInfo += ', hasProxies=' + c.includes('proxies:');
+        // Check if it has = signs
+        debugInfo += ', hasEq=' + (c.split('\n').filter(l => l.includes('=')).length);
+        // Try to show first 200 chars
+        debugInfo += ', preview=' + c.substring(0, 100).replace(/\n/g, ' ');
+      }
+      return editMsg(env, cid, mid, '❌ 无法解析\n\n' + debugInfo);
     }
     // 去重
     const mergedStd = deduplicateProxies(proxies).map(p => ({ ...p, name: addFlag(p.name) }));
