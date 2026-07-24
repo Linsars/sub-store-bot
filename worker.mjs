@@ -2960,3 +2960,49 @@ export default {
     );
   },
 };
+// Simple Clash YAML proxies extractor
+function parseClashYamlSimple(text) {
+  const proxies = [];
+  // Find proxies: section (with or without leading newline)
+  let idx = text.indexOf('\nproxies:');
+  if (idx === -1 && text.startsWith('proxies:')) idx = 0;
+  if (idx === -1) return proxies;
+  let rest = idx === 0 ? text.slice(9) : text.slice(idx + 11);
+  // Find all "- name:" entries (2-space indent)
+  const nameRe = /^\s{2,4}- name: (.+)$/gm;
+  let m;
+  const entries = [];
+  while ((m = nameRe.exec(rest)) !== null) {
+    entries.push({ start: m.index, name: m[1].trim().replace(/^['"]|['"]$/g, '') });
+  }
+  for (let i = 0; i < entries.length; i++) {
+    const start = entries[i].start;
+    const end = i + 1 < entries.length ? entries[i + 1].start : rest.indexOf('\nproxy-groups:');
+    const block = rest.slice(start, end > 0 ? end : undefined);
+    const proxy = { name: entries[i].name, type: '', server: '', port: 0 };
+    // Match fields: 4-8 spaces indent to handle nested objects like ws-opts
+    const fieldRe = /^\s{4,8}([\w-]+):\s*(.+)$/gm;
+    let fm;
+    while ((fm = fieldRe.exec(block)) !== null) {
+      const k = fm[1];
+      let v = fm[2].trim().replace(/^['"]|['"]$/g, '');
+      if (k === 'type') proxy.type = v;
+      else if (k === 'server') proxy.server = v;
+      else if (k === 'port') proxy.port = parseInt(v, 10) || 0;
+      else if (k === 'password') proxy.password = v;
+      else if (k === 'uuid') proxy.uuid = v;
+      else if (k === 'cipher') proxy.cipher = v;
+      else if (k === 'sni' || k === 'servername') proxy.sni = v;
+      else if (k === 'network') proxy.network = v;
+      else if (k === 'tls') proxy.tls = v === 'true';
+      else if (k === 'udp') proxy.udp = v === 'true';
+      else if (k === 'skip-cert-verify') proxy['skip-cert-verify'] = v === 'true';
+      else if (k === 'alpn') proxy.alpn = v.split(',').map(s => s.trim());
+      else if (k === 'flow') proxy.flow = v;
+      else if (k === 'client-fingerprint') proxy['client-fingerprint'] = v;
+      else proxy[k] = v;
+    }
+    if (proxy.type && proxy.server && proxy.port) proxies.push(proxy);
+  }
+  return proxies;
+}
