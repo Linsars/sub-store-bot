@@ -2273,6 +2273,8 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
             if (resp.ok) tmplText = await resp.text();
           }
           if (tmplText && tmplText.includes('proxies:')) {
+            // 检测模板 proxy 格式
+            const proxyFormat = /- \{/.test(tmplText.split('proxies:')[1].split('\nproxy-groups')[0] || '') ? 'inline' : 'block';
             const tmplLines = tmplText.split('\n');
             let proxiesStart = -1;
             let proxiesEnd = tmplLines.length;
@@ -2284,9 +2286,29 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
               }
             }
             if (proxiesStart >= 0) {
-              tmplLines.splice(proxiesStart + 1, proxiesEnd - proxiesStart - 1, ...output.replace(/^proxies:\n/, '').split('\n'));
+              // 生成匹配格式的 proxies
+              let proxiesYaml = '';
+              if (proxyFormat === 'inline') {
+                proxiesYaml = proxiesForConvert.map(p => {
+                  const parts = ['name: ' + JSON.stringify(p.name), 'type: ' + p.type, 'server: ' + p.server, 'port: ' + p.port];
+                  if (p.password) parts.push('password: ' + p.password);
+                  if (p.uuid) parts.push('uuid: ' + p.uuid);
+                  if (p.cipher) parts.push('cipher: ' + p.cipher);
+                  if (p.network) parts.push('network: ' + p.network);
+                  if (p.tls) parts.push('tls: true');
+                  if (p.sni) parts.push('sni: ' + p.sni);
+                  if (p['skip-cert-verify']) parts.push('skip-cert-verify: true');
+                  if (p.udp) parts.push('udp: true');
+                  return '  - { ' + parts.join(', ') + ' }';
+                }).join('\n');
+              } else {
+                // 块格式 - 用现有的 output
+                proxiesYaml = output.replace(/^proxies:\n/, '').split('\n').join('\n');
+              }
+              tmplLines.splice(proxiesStart + 1, proxiesEnd - proxiesStart - 1, ...proxiesYaml.split('\n'));
               output = tmplLines.join('\n');
             }
+          }
           }
         } catch {}
       }
