@@ -2284,7 +2284,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
               }
             }
             if (proxiesStart >= 0) {
-              tmplLines.splice(proxiesStart + 1, proxiesEnd - proxiesStart - 1, ...output.split('\n'));
+              tmplLines.splice(proxiesStart + 1, proxiesEnd - proxiesStart - 1, ...output.replace(/^proxies:\n/, '').split('\n'));
               output = tmplLines.join('\n');
             }
           }
