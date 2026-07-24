@@ -171,7 +171,30 @@ function parseProxiesWithSurge(text, skipSurge) {
     if (surge.length > 0) return { proxies: surge, debug: debug.join(", ") };
   }
   try {
-    const r = ProxyUtils.parse(text);
+    // Try each preprocessor
+    let preprocessors = [];
+    try {
+      const p = ProxyUtils._preprocessors || ProxyUtils.preprocessors;
+      if (p) preprocessors = Object.keys(p);
+    } catch(e) {}
+    debug.push("preprocessors=" + preprocessors.join("|"));
+    
+    // Try raw parse
+    try {
+      const r = ProxyUtils.parse(text);
+      debug.push("engine_type=" + typeof r);
+      debug.push("engine_isArray=" + Array.isArray(r));
+      debug.push("engine_len=" + (r ? r.length : "null"));
+      if (r && r.length > 0) return { proxies: r, debug: debug.join(", ") };
+      // Check if it returns object with proxies key
+      if (r && r.proxies) {
+        debug.push("engine_proxies_key=" + r.proxies.length);
+        return { proxies: r.proxies, debug: debug.join(", ") };
+      }
+    } catch (e) {
+      debug.push("engine_err=" + e.message);
+      debug.push("engine_stack=" + (e.stack || "").substring(0, 200));
+    }
     debug.push("engine=" + (r ? r.length : "null"));
     if (r && r.length > 0) return { proxies: r, debug: debug.join(", ") };
   } catch (e) {
