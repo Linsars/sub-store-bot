@@ -1266,13 +1266,33 @@ async function onMsg(msg, env) {
 
   // YAML 模板编辑模式
   if (u.state === 'TMPL_EDIT') {
-    const tmplText = (msg.text || '').trim();
+    const input = (msg.text || '').trim();
     u.state = null;
-    if (tmplText === '/cancel' || !tmplText) {
+    if (input === '/cancel' || !input) {
       return replyMsg(env, uid, cid, '✖ 已取消');
     }
-    await env.KV.put('tmpl:' + uid, tmplText);
-    return replyMsg(env, uid, cid, '✅ YAML 模板已保存', mainKb());
+    let tmplText = input;
+    let tmplName = '自定义';
+    // 自动拉取 URL 内容
+    if (/^https?:\/\//i.test(input)) {
+      try {
+        const resp = await fetch(input);
+        if (resp.ok) {
+          tmplText = await resp.text();
+          // 从 URL 提取模板名
+          const urlParts = input.split('/');
+          tmplName = urlParts[urlParts.length - 1].replace(/\.[^.]+$/, '') || 'URL 导入';
+        }
+      } catch {}
+    }
+    // 尝试从 JSON 提取名称
+    try {
+      const parsed = JSON.parse(tmplText);
+      if (parsed.name) tmplName = parsed.name;
+      if (parsed.text) tmplText = parsed.text;
+    } catch {}
+    await env.KV.put('tmpl:' + uid, JSON.stringify({ name: tmplName, text: tmplText }));
+    return replyMsg(env, uid, cid, '✅ YAML 模板已保存：' + tmplName, mainKb());
   }
 
   // 备注模式 — 只改 preview（列表名字），不碰短链内容
