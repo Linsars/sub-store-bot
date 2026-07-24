@@ -157,22 +157,21 @@ function parseProxies(text) {
 }
 
 function parseProxiesWithSurge(text, skipSurge) {
+  const debug = [];
   if (!skipSurge) {
     const { proxies: surge } = parseSurgeLines(text);
-    console.log('[parseProxies] Surge parsed:', surge.length);
-    if (surge.length > 0) return surge;
+    debug.push("surge=" + surge.length);
+    if (surge.length > 0) return { proxies: surge, debug: debug.join(", ") };
   }
-  // ProxyUtils.parse
   try {
-    console.log('[parseProxies] Trying ProxyUtils.parse, text length:', text.length);
     const r = ProxyUtils.parse(text);
-    console.log('[parseProxies] ProxyUtils.parse result:', r ? r.length : 0);
-    if (r && r.length > 0) return r;
+    debug.push("engine=" + (r ? r.length : "null"));
+    if (r && r.length > 0) return { proxies: r, debug: debug.join(", ") };
   } catch (e) {
-    console.log('[parseProxies] ProxyUtils.parse error:', e.message);
-    throw e;
+    debug.push("engine_err=" + e.message);
+    return { proxies: [], debug: debug.join(", ") };
   }
-  return [];
+  return { proxies: [], debug: debug.join(", ") };
 }
 
 // ==================== 国家旗帜 ====================
@@ -1524,7 +1523,7 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
         // Check if it has = signs
         debugInfo += ', hasEq=' + (c.split('\n').filter(l => l.includes('=')).length);
         // Try to show first 200 chars
-        debugInfo += ', preview=' + c.substring(0, 100).replace(/\n/g, ' ');
+      return editMsg(env, cid, mid, '❌ 无法解析\\n\\n' + debugInfo + '\\nparse: ' + _parseDebug);
       }
       return editMsg(env, cid, mid, '❌ 无法解析\n\n' + debugInfo);
     }
