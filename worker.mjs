@@ -162,16 +162,16 @@ function parseProxiesWithSurge(text, skipSurge) {
     console.log('[parseProxies] Surge parsed:', surge.length);
     if (surge.length > 0) return surge;
   }
-
-  // ProxyUtils.parse 兜底（慢但全，处理非 YAML 格式）
+  // ProxyUtils.parse
   try {
     console.log('[parseProxies] Trying ProxyUtils.parse, text length:', text.length);
     const r = ProxyUtils.parse(text);
     console.log('[parseProxies] ProxyUtils.parse result:', r ? r.length : 0);
     if (r && r.length > 0) return r;
-} catch (e) {
+  } catch (e) {
     console.log('[parseProxies] ProxyUtils.parse error:', e.message);
-    throw e; // Re-throw to see error
+    throw e;
+  }
   return [];
 }
 
