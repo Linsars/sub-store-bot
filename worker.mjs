@@ -2309,7 +2309,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
               output = tmplLines.join('\n');
             }
           }
-          }
         } catch {}
       }
     } else {
