@@ -10,9 +10,10 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 |------|------|------|
 | **输入** | 远程订阅 / 本地订阅 / 多订阅合并 / 反代 | 发 URL 或文件，7 种 UA 轮询拉取（可自定义），PROXY_URL 绕过 CF 拉取拦截，同对话多条自动去重合并 |
 | **输出** | 13 种格式 + Snell + 双链 | Clash Meta、URI、JSON、V2Ray、sing-box、Surfboard、QX、Shadowrocket、Surge、Loon、Stash、Egern、Base64；Snell 节点完整支持（Surge 格式 parser 增强）；WG 节点和 Gost 节点独立侧链输出 |
+| **YAML 模板** | 动态仓库模板 + 用户自定义 | 从 `landing/` 目录自动加载模板（支持 `.ini`/`.yaml`/`.yml`），模板清单 `templates.json` 定义；用户可添加自定义模板 |
 | **处理** | 去同名上标 + 智能去重 | 同名节点自动上标（²³…），基于 server:port:type:uuid:sni:path:network 特征去重 |
 | **短链** | 有效期 / 阅后即焚 / 梅开二度 / 管理 | IP 独立计数访问限制，过期/焚毁自动销毁；落地页反向代理可自定义 HTML |
-| **安全** | SSRF 防护 / TG 限流 / 配置持久化 / 调试 | SSRF 防护（LANDING_HTML_URL 仅 GitHub）；TG 限流 30s/5 次；Webhook 校验；配置落 KV 升级不丢；DEBUG_TOKEN 鉴权端点 |
+| **安全** | SSRF 防护 / TG 限流 / 配置持久化 / 调试 | SSRF 防护（LANDING_DIR 仅 GitHub）；TG 限流 30s/5 次；Webhook 校验；配置落 KV 升级不丢；DEBUG_TOKEN 鉴权端点 |
 
 ---
 
@@ -31,9 +32,9 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
    - `WEBHOOK_SECRET` = 域名防呆（可选，随便设置个密码）
    - `PROXY_URL` = 反代地址，绕过 CF 拦截（可选，[搭建教程](landing/proxy-setup.md)）
    - `DEBUG_TOKEN` = 随意设个密码，用于 debug-fetch 接口鉴权（可选）
-   - `LANDING_HTML_URL` = 自定义落地页 HTML，不设则用默认（可选）
-4. 去 **描述** 页面，点 Worker 域名激活 bot，然后复制此域名去填CLIP_URL
-5. Telegram 里发 `/start`
+   - `LANDING_DIR` = 落地页和模板目录（可选，格式 `{owner}/{repo}/{branch}/{path}`，如 `Linsars/sub-store-bot/main/landing`）
+3. 去 **描述** 页面，点 Worker 域名激活 bot，然后复制此域名去填CLIP_URL
+4. Telegram 里发 `/start`
 
 ## 环境变量
 
@@ -46,7 +47,7 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 | `WEBHOOK_SECRET` | Webhook 请求头校验，防域名探测 | ❌ |
 | `PROXY_URL` | 反代基础 URL，绕过 CF-to-CF 拉取拦截 | ❌ |
 | `DEBUG_TOKEN` | debug-fetch 接口鉴权 Token | ❌ |
-| `LANDING_HTML_URL` | 自定义落地页 HTML 地址，默认从本仓库拉取 | ❌ |
+| `LANDING_DIR` | 落地页和模板目录，格式 `{owner}/{repo}/{branch}/{path}`，默认 `Linsars/sub-store-bot/main/landing` | ❌ |
 
 ## 目录结构
 
@@ -56,9 +57,9 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 ├── wrangler.toml           # CF Workers 配置
 ├── README.md
 ├── landing/
-│   └── index.html          # 默认落地页
-├── landing/
 │   ├── index.html          # 默认落地页
+│   ├── templates.json      # YAML 模板清单
+│   ├── noom.ini            # NooM 规则集模板
 │   └── proxy-setup.md      # 反代搭建教程
 ├── tools/
 │   ├── substorebot-deploy-code.py  # CF 部署脚本（本地用）
@@ -72,6 +73,27 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
         └── sync-proxy-utils.yml    # 引擎自动同步（每周日 6:00 UTC）
 ```
 
+## YAML 模板系统
+
+### 添加自定义模板
+
+1. 在 `landing/` 目录下放入 `.ini`、`.yaml` 或 `.yml` 文件
+2. 编辑 `templates.json` 添加模板条目：
+   ```json
+   [
+     {"file": "noom.ini", "name": "NooM 规则集"},
+     {"file": "my-template.yaml", "name": "我的模板"}
+   ]
+   ```
+3. Bot 中进入「YAML 模板管理」→「🔄 同步仓库」拉取模板
+
+### Fork 使用
+
+1. Fork 本仓库
+2. 设置 `LANDING_DIR` 环境变量指向你的仓库目录
+3. 在 `landing/` 目录添加模板文件和 `templates.json`
+4. Bot 自动从你的仓库加载模板
+
 ## Sub-Store 引擎
 
 `proxy-utils.esm.js` 由 `tools/proxy-utils-src/` 从 [`sub-store-org/Sub-Store`](https://github.com/sub-store-org/Sub-Store) 上游同步构建：
@@ -83,4 +105,3 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 ## License
 
 MIT
-
