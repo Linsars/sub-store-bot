@@ -1470,6 +1470,7 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
     }
     // ===== 本地文件/文本：继续原有解析流程 =====
     let proxies = [];
+    let _parseDebug = "";
     let gostInput = '';
     for (const item of items) {
       const content = item.content || '';
@@ -1484,7 +1485,7 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
           if (parsed && parsed.length > 0) proxies.push(...parsed);
         }
       } else {
-        let parsed = parseProxies(content);
+        let parseResult = parseProxies(content); let parsed = parseResult.proxies; _parseDebug = parseResult.debug;
         if (parsed && parsed.length > 0) proxies.push(...parsed);
       }
     }
