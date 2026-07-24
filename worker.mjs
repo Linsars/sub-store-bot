@@ -158,11 +158,28 @@ function parseProxies(text) {
 
 function parseProxiesWithSurge(text, skipSurge) {
   const debug = [];
+  debug.push("textLen=" + text.length);
+  debug.push("first100=" + text.substring(0, 100).replace(/\n/g, "|"));
+  debug.push("hasProxies=" + text.includes("proxies:"));
+  // Check for BOM or null bytes
+  debug.push("hasBOM=" + (text.charCodeAt(0) === 0xFEFF));
+  debug.push("nullBytes=" + (text.match(/\0/g) || []).length);
+  debug.push("proxiesIdx=" + text.indexOf("\nproxies:"));
   if (!skipSurge) {
     const { proxies: surge } = parseSurgeLines(text);
     debug.push("surge=" + surge.length);
     if (surge.length > 0) return { proxies: surge, debug: debug.join(", ") };
   }
+  try {
+    const r = ProxyUtils.parse(text);
+    debug.push("engine=" + (r ? r.length : "null"));
+    if (r && r.length > 0) return { proxies: r, debug: debug.join(", ") };
+  } catch (e) {
+    debug.push("engine_err=" + e.message);
+    return { proxies: [], debug: debug.join(", ") };
+  }
+  return { proxies: [], debug: debug.join(", ") };
+}
   try {
     const r = ProxyUtils.parse(text);
     debug.push("engine=" + (r ? r.length : "null"));
