@@ -99,8 +99,6 @@ async function safeExecute(fn, env, uid, cid, mid = null, context = '') {
   }
 }
 
-
-
 // ==================== Surge 格式行解析 ====================
 
 function parseSurgeLines(text) {
@@ -268,7 +266,6 @@ function isSs2022Cipher(cipher) {
   const c = String(cipher || '').trim().toLowerCase();
   return ['2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm', '2022-blake3-chacha20-poly1305'].includes(c);
 }
-
 
 // ==================== 本地订阅收集系统 ====================
 
@@ -824,8 +821,6 @@ function deduplicateProxies(proxies) {
   });
 }
 
-
-
 // ==================== 编辑提示消息或发新消息 ====================
 
 async function replyOrEdit(u, cid, env, opts) {
@@ -1279,7 +1274,7 @@ async function onMsg(msg, env) {
         const resp = await fetch(input);
         if (resp.ok) {
           const noomParsed = parseTemplate(await resp.text());
-      tmplText = JSON.stringify({ name: 'NooM', prefix: noomParsed.prefix || '', suffix: noomParsed.suffix || '', proxyKeys: noomParsed.proxyKeys || [], proxyFormat: noomParsed.proxyFormat || 'block' });
+      tmplText = JSON.stringify({ name: 'NooM', prefix: noomParsed.prefix || '', suffix: noomParsed.suffix || '', proxyKeys: noomParsed.proxyKeys || [] });
           // 从 URL 提取模板名
           const urlParts = input.split('/');
           tmplName = urlParts[urlParts.length - 1].replace(/\.[^.]+$/, '') || 'URL 导入';
@@ -1296,7 +1291,7 @@ async function onMsg(msg, env) {
     try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
     templates.push({ name: tmplName, text: tmplText, active: false });
     const parsed = parseTemplate(tmplText);
-    tmplText = JSON.stringify({ name: tmplName, prefix: parsed.prefix || '', suffix: parsed.suffix || '', proxyKeys: parsed.proxyKeys || [], proxyFormat: parsed.proxyFormat || 'block' });
+    tmplText = JSON.stringify({ name: tmplName, prefix: parsed.prefix || '', suffix: parsed.suffix || '', proxyKeys: parsed.proxyKeys || [] });
     await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
     return replyMsg(env, uid, cid, '✅ 模板已添加：' + tmplName + '\n去 YAML 模板管理切换', mainKb());
   }
@@ -1412,7 +1407,6 @@ async function onMsg(msg, env) {
 
 // ==================== 回调处理 ====================
 
-
 async function onCb(q, env) {
   const uid = String(q.from.id);
   if (!isAllowed(uid, env)) return;
@@ -1475,7 +1469,6 @@ async function onCb(q, env) {
   }
   if (d.startsWith('conv_fmt:')) return cb_conv_fmt(env, uid, cid, mid, u, d, q);
 }
-
 
 // ==================== onCb 路由处理函数 ====================
 
@@ -1895,7 +1888,6 @@ async function cb_chg_ttl(env, uid, cid, mid, u, d, q) {
     return editMsg(env, cid, mid, '\u2705 \u5DF2\u4FEE\u6539');
 }
 
-
 async function cb_mod_acc(env, uid, cid, mid, u, d, q) {
   const linkId = d.replace('mod_acc_', '');
     const links = await getUserLinks(uid, env);
@@ -2274,7 +2266,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
           }
           if (tmplText && tmplText.includes('proxies:')) {
             // 检测模板 proxy 格式
-            const proxyFormat = /- \{/.test(tmplText.split('proxies:')[1].split('\nproxy-groups')[0] || '') ? 'inline' : 'block';
+
             const tmplLines = tmplText.split('\n');
             let proxiesStart = -1;
             let proxiesEnd = tmplLines.length;
@@ -2288,7 +2280,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
             if (proxiesStart >= 0) {
               // 生成匹配格式的 proxies
               let proxiesYaml = '';
-              if (proxyFormat === 'inline') {
+              if (false) { // inline removed
                 proxiesYaml = proxiesForConvert.map(p => {
                   const parts = ['name: ' + JSON.stringify(p.name), 'type: ' + p.type, 'server: ' + p.server, 'port: ' + p.port];
                   if (p.password) parts.push('password: ' + p.password);
@@ -2461,12 +2453,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
     return;
 }
 
-
-
-
 // ==================== YAML 模板管理 ====================
-
-
 
 async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
   let templates = [];
@@ -2550,8 +2537,6 @@ async function cb_tmpl_del(env, uid, cid, mid, u, d, q) {
   return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
 }
 
-
-
 function parseTemplate(tmplText) {
   if (!tmplText || !tmplText.includes('proxies:')) return { raw: tmplText };
   const lines = tmplText.split('\n');
@@ -2580,9 +2565,8 @@ function parseTemplate(tmplText) {
     }
   }
   const proxyFormat = /^- \{/.test(lines.slice(proxiesStart > 0 ? proxiesStart : 0, proxiesEnd).join("\n")) ? "inline" : "block";
-  return { prefix, suffix, proxyKeys, proxyFormat };
+  return { prefix, suffix, proxyKeys };
 }
-
 
   // ==================== Worker 入口 ====================
 
