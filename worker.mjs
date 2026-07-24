@@ -239,6 +239,37 @@ function parseClashYaml(text) {
   return proxies;
 }
 
+// ==================== 国家旗帜 ====================
+
+function addFlag(name) {
+  name = String(name || '').trim() || '未命名';
+  if (/[\u{1F1E6}-\u{1F1FF}]{2}/u.test(name)) return name;
+  const rules = [
+    [/(\b|[^A-Za-z])(HK|Hong Kong|香港|深港|广港|沪港)(\b|[^A-Za-z])/i, '\u{1F1ED}\u{1F1F0}'],
+    [/(\b|[^A-Za-z])(TW|Taiwan|台湾|台灣|台北|新北|广台)(\b|[^A-Za-z])/i, '\u{1F1F9}\u{1F1FC}'],
+    [/(\b|[^A-Za-z])(JP|Japan|日本|东京|大阪|埼玉|广日)(\b|[^A-Za-z])/i, '\u{1F1EF}\u{1F1F5}'],
+    [/(\b|[^A-Za-z])(SG|Singapore|新加坡|狮城|广新)(\b|[^A-Za-z])/i, '\u{1F1F8}\u{1F1EC}'],
+    [/(\b|[^A-Za-z])(KR|Korea|韩国|首尔|春川|广韩)(\b|[^A-Za-z])/i, '\u{1F1F0}\u{1F1F7}'],
+    [/(\b|[^A-Za-z])(US|America|United States|美国|洛杉矶|圣何塞|纽约|西雅图|芝加哥|波特兰|达拉斯|广美)(\b|[^A-Za-z])/i, '\u{1F1FA}\u{1F1F8}'],
+    [/(\b|[^A-Za-z])(UK|Britain|英国|伦敦)(\b|[^A-Za-z])/i, '\u{1F1EC}\u{1F1E7}'],
+    [/(\b|[^A-Za-z])(FR|France|法国|巴黎)(\b|[^A-Za-z])/i, '\u{1F1EB}\u{1F1F7}'],
+    [/(\b|[^A-Za-z])(DE|Germany|德国|法兰克福)(\b|[^A-Za-z])/i, '\u{1F1E9}\u{1F1EA}'],
+    [/(\b|[^A-Za-z])(NL|Netherlands|荷兰|阿姆斯特丹)(\b|[^A-Za-z])/i, '\u{1F1F3}\u{1F1F1}'],
+    [/(\b|[^A-Za-z])(RU|Russia|俄罗斯|莫斯科)(\b|[^A-Za-z])/i, '\u{1F1F7}\u{1F1FA}'],
+    [/(\b|[^A-Za-z])(IN|India|印度|孟买)(\b|[^A-Za-z])/i, '\u{1F1EE}\u{1F1F3}'],
+    [/(\b|[^A-Za-z])(AU|Australia|澳大利亚|悉尼)(\b|[^A-Za-z])/i, '\u{1F1E6}\u{1F1FA}'],
+    [/(\b|[^A-Za-z])(CA|Canada|加拿大|蒙特利尔)(\b|[^A-Za-z])/i, '\u{1F1E8}\u{1F1E6}'],
+  ];
+  for (const [r, f] of rules) if (r.test(name)) return f + ' ' + name;
+  return name;
+}
+
+function isSs2022Cipher(cipher) {
+  const c = String(cipher || '').trim().toLowerCase();
+  return ['2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm', '2022-blake3-chacha20-poly1305'].includes(c);
+}
+
+
 // ==================== 本地订阅收集系统 ====================
 
 function collectionText(collection) {
@@ -324,6 +355,7 @@ function mainKb() {
       ],
       [
         { text: '\u{1F4CB} 我的短链', callback_data: 'my_links_0' },
+        { text: '\u{1F4DD} YAML \u6A21\u677F', callback_data: 'tmpl_menu' },
       ],
     ],
   };
