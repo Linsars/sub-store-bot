@@ -200,56 +200,11 @@ policy_groups:
     type: select
     urls:
     - https://sub.store/download/DjiURL
-    - https://base64.linsar.us.ci/share/4pj9mvw
-    - https://sub.store/download/lyhy
-    - https://sub.store/download/ecy
-    - https://sub.store/download/qinde
-    - https://sub.store/download/bajie
-    - https://sub.store/download/jiaK
-    - https://sub.store/download/guo65
-    - https://sub.store/download/yuetu2k
-    - https://sub.store/download/yueT
-    - https://sub.store/download/guodjh
-    - https://sub.store/download/guoSZ
-    - https://sub.store/download/oix
-    - https://sub.store/download/mj90
-    - https://sub.store/download/8LX
-    - https://sub.store/download/cfedge
-    urls_disabled:
-    - https://sub.store/download/DjiURL
-    - https://sub.store/download/lyhy
-    - https://sub.store/download/ecy
-    - https://sub.store/download/qinde
-    - https://sub.store/download/bajie
-    - https://sub.store/download/jiaK
-    - https://sub.store/download/guodjh
-    - https://sub.store/download/guoSZ
-    - https://sub.store/download/oix
-    - https://sub.store/download/mj90
-    - https://sub.store/download/8LX
-    - https://sub.store/download/cfedge
     icon: https://raw.githubusercontent.com/baiitang/Sakura/main/Fileball/Toun/Fwicon/icon/Gugu.png
     hidden: false
 - select:
     name: 🍜 免流计划
     policies:
-    - jp-死
-    - 🛩️ 回国节点
-    - 动态百度
-    - 广州电信
-    - 广州联通
-    - 广州联通x
-    - 广州移动
-    - 南京电信
-    - 南京电信x
-    - 南京联通
-    - 南京移动
-    - 苏州联通
-    - 北京电信
-    - 北京电信x
-    - 北京电信y
-    - 保定联通x
-    - 保定联通y
     flatten: true
     filter: (?i)(北京|上海|广州|深圳|杭州|成都|重庆|武汉|南京|天津|苏州|西安|长沙|郑州|青岛|大连|厦门|昆明|合肥|福州|济南|南宁|贵阳|太原|南昌|石家庄|哈尔滨|长春|沈阳|兰州|银川|西宁|乌鲁木齐|呼和浩特|拉萨|海口|三亚|珠海|东莞|佛山|无锡|常州|徐州|温州|宁波|泉州|漳州|汕头|中山|惠州|保定|唐山|秦皇岛|廊坊|邯郸|张家口|承德|沧州|衡水|吉林|延边|齐齐哈尔|牡丹江|佳木斯|大庆|鞍山|抚顺|本溪|丹东|锦州|营口|盘锦|葫芦岛|通化|白山|松原|白城|香港|台湾|澳门|台北|高雄|台中|台南|新北|桃園|桃園|九龙|新界|CN|China|中国|大陆|国内|移动|联通|电信|广电|直连|免流|死| CMCC|CUCC|CTCC)
     block_quic: false
@@ -351,17 +306,12 @@ policy_groups:
     name: 🛩️ 回国节点
     type: smart
     urls:
-    - https://sub.store/download/ss-1
-    - https://sub.store/download/mugua
-    urls_disabled:
-    - https://sub.store/download/ss-1
     icon: https://raw.githubusercontent.com/chxm1023/Script_X/main/icon/yanhua1.png
     hidden: true
 - external:
     name: 🤖 AI 专用节点
     type: smart
     urls:
-    - https://sub.store/download/cfedge
     filter: (?i)(Grok|GPT|ChatGPT|OpenAI|AI|支持GPT|ChatGPT可用)
     icon: https://raw.githubusercontent.com/chxm1023/Script_X/main/icon/ChatGPT/ChatGPT6.png
     hidden: true
@@ -369,12 +319,6 @@ policy_groups:
     name: 🧬 自动选择
     type: smart
     urls:
-    - https://sub.store/download/jiaK
-    - https://sub.store/download/guodjh
-    - https://sub.store/download/guoDZH
-    urls_disabled:
-    - https://sub.store/download/jiaK
-    - https://sub.store/download/guodjh
     icon: https://raw.githubusercontent.com/arthur97172/Rule_script/main/Iconset/Auto.png
     hidden: true
 - smart:
@@ -533,21 +477,6 @@ policy_groups:
     name: 🔄 PingMe轮询池
     policies:
     - 🧬 自动选择
-    - 广州电信
-    - 广州联通
-    - 广州联通x
-    - 广州移动
-    - 南京电信
-    - 南京电信x
-    - 南京联通
-    - 南京移动
-    - 苏州联通
-    - 北京电信
-    - 北京电信x
-    - 北京电信y
-    - 保定联通x
-    - 保定联通y
-    - 动态百度
     algorithm: round_robin
     flatten: true
     icon: https://raw.githubusercontent.com/chxm1023/Script_X/main/icon/stash1.png
