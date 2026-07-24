@@ -2385,22 +2385,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
 // ==================== YAML 模板管理 ====================
 
-sync function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
-  let current = null;
-  try { current = await env.KV.get('tmpl:' + uid); } catch {}
-  const hasTmpl = !!current;
-  const text = '\u{1F4DD} <b>YAML \u6A21\u677F\u7BA1\u7406</b>\n\n' +
-    (hasTmpl ? '\u2705 \u5DF2\u8BBE\u7F6E\u81EA\u5B9A\u4E49\u6A21\u677F\n\u70B9\u300C\u7F16\u8F91\u300D\u4FEE\u6539\uFF0C\u70B9\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u6E05\u9664' : '\u26AA \u672A\u8BBE\u7F6E\uFF0C\u5C06\u4F7F\u7528\u5185\u7F6E Clash \u683C\u5F0F') +
-    '\n\n\u683C\u5F0F\u9009\u62E9\u9875\u7684\u300C\u81EA\u5B9A YAML\u300D\u4F1A\u4F7F\u7528\u6B64\u6A21\u677F';
-  const kb = {
-    inline_keyboard: [
-      [{ text: '\u270F\uFE0F \u7F16\u8F91\u6A21\u677F', callback_data: 'tmpl_edit' }],
-      [{ text: '\u{1F504} \u6062\u590D\u9ED8\u8BA4', callback_data: 'tmpl_reset' }],
-      [{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }],
-    ]
-  };
-  return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text, parse_mode: 'HTML', reply_markup: kb });
-}
+
 
 async function cb_tmpl_edit(env, uid, cid, mid, u, d, q) {
   u.state = 'TMPL_EDIT';
