@@ -2260,6 +2260,11 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       let templates = [];
       try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
       const activeTmpl = templates.find(t => t.active);
+      if (!activeTmpl) {
+        let builtinIdx = 0;
+        try { builtinIdx = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch {}
+        if (builtinIdx === 1) activeTmpl = { text: '__NOOM__' };
+      }
       if (activeTmpl && activeTmpl.text) {
         try {
           let tmplText = activeTmpl.text;
@@ -2451,13 +2456,15 @@ async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
     { name: 'NooM 规则集', text: '__NOOM__', builtin: true },
   ];
   const all = [...builtins, ...templates];
+  let builtinActive = 0;
+  try { builtinActive = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch {}
   const activeIdx = templates.findIndex(t => t.active);
   const lines = ['\u{1F4DD} <b>YAML 模板管理</b>', ''];
   const rows = [];
   // 内置模板
   for (let i = 0; i < builtins.length; i++) {
     const t = builtins[i];
-    const isActive = activeIdx === -1 && i === 0; // 无自定义时默认第一个
+    const isActive = activeIdx === -1 && builtinActive === i; // 无自定义时默认第一个
     const icon = isActive ? '\u25CF' : '\u25CB';
     lines.push(icon + ' ' + t.name);
     rows.push([{ text: (isActive ? '\u2705 ' : '') + t.name, callback_data: 'tmpl_select_b:' + i }]);
