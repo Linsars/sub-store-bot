@@ -343,7 +343,7 @@ const FORMAT_OPTIONS = [
   { id: 'stash', label: 'Stash' },
   { id: 'egern', label: 'Egern' },
   { id: 'b64', label: 'Base64' },
-  { id: 'native', label: '原生 YAML' },
+  { id: 'native', label: '自定 YAML' },
 ];
 
 function fmtKb(allowed, convTtl, ttlDefault, u) {
@@ -1232,6 +1232,17 @@ async function onMsg(msg, env) {
     });
   }
 
+  // YAML 模板编辑模式
+  if (u.state === 'TMPL_EDIT') {
+    const tmplText = (msg.text || '').trim();
+    u.state = null;
+    if (tmplText === '/cancel' || !tmplText) {
+      return replyMsg(env, uid, cid, '✖ 已取消');
+    }
+    await env.KV.put('tmpl:' + uid, tmplText);
+    return replyMsg(env, uid, cid, '✅ YAML 模板已保存', mainKb());
+  }
+
   // 备注模式 — 只改 preview（列表名字），不碰短链内容
   if (u.state && u.state.startsWith('RENAME_')) {
     const linkId = u.state.replace('RENAME_', '');
@@ -1397,6 +1408,11 @@ async function onCb(q, env) {
   if (d.startsWith('conv_ttl_set:')) return cb_conv_ttl_set(env, uid, cid, mid, u, d, q);
   if (d === 'conv_acc_menu') return cb_conv_acc_menu(env, uid, cid, mid, u, d, q);
   if (d.startsWith('conv_acc_set:')) return cb_conv_acc_set(env, uid, cid, mid, u, d, q);
+  if (d.startsWith('tmpl_')) {
+    if (d === 'tmpl_menu') return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
+    if (d === 'tmpl_edit') return cb_tmpl_edit(env, uid, cid, mid, u, d, q);
+    if (d === 'tmpl_reset') return cb_tmpl_reset(env, uid, cid, mid, u, d, q);
+  }
   if (d.startsWith('conv_fmt:')) return cb_conv_fmt(env, uid, cid, mid, u, d, q);
 }
 
@@ -1509,7 +1525,7 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
       return editMsg(env, cid, mid, '\u274C 无法从收集的内容中解析出任何节点');
     }
     // 去重
-    const mergedStd = deduplicateProxies(proxies);
+    const mergedStd = deduplicateProxies(proxies).map(p => ({ ...p, name: addFlag(p.name) }));
     const dedupCount = proxies.length - mergedStd.length;
     u._lastProxies = mergedStd;
     u._fmtMsg = null;
@@ -2130,7 +2146,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       }
       output = rawText;
     } else if (fmt === 'native') {
-      // 原生 Clash YAML（块格式），处理 Sub 引擎解析不了的畸形节点
+      // 自定 YAML：优先用用户模板（块格式），处理 Sub 引擎解析不了的畸形节点
       output = 'proxies:\n' + proxiesForConvert.map(p => {
         const order = ['name','type','server','port','password','uuid','cipher','network','tls','sni','skip-cert-verify','flow','udp','alpn','client-fingerprint','servername','grpc-opts','ws-opts','reality-opts'];
         const seen = new Set();
@@ -2279,6 +2295,20 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
         extraUrls.push({ text: '⚡ WireGuard (原生 YAML)', url: wgUrl });
       }
 
+      // SS2022 侧链
+      const ss2022Nodes = proxiesForConvert.filter(p => p.type === 'ss' && isSs2022Cipher(p.cipher));
+      if (ss2022Nodes.length > 0 && fmt !== 'clashmeta' && fmt !== 'native' && fmt !== 'b64') {
+        let ss2022Yaml;
+        try { ss2022Yaml = ProxyUtils.produce(ss2022Nodes, 'clashmeta'); } catch {}
+        if (!ss2022Yaml) ss2022Yaml = 'proxies:\n' + ss2022Nodes.map(p => '  - {name: "' + p.name + '", type: ss, server: ' + p.server + ', cipher: ' + p.cipher + '}').join('\n');
+        const { url: ss2022Url } = await saveToClipAndTrack(String(ss2022Yaml), getEffectiveTtl(u), env, uid, {
+          preview: 'SS2022 × ' + ss2022Nodes.length + ' (自定 YAML)', nodeCount: ss2022Nodes.length, source: 'ss2022',
+          burn: u?._burn || false,
+          landing: u?._landing || false,
+        }, getEffectiveMaxAccess(u));
+        extraUrls.push({ text: '⚡ SS2022 (自定 YAML)', url: ss2022Url });
+      }
+
       // Gost 侧链
       if (u._gostInput) {
         const { url: gostUrl } = await saveToClipAndTrack(u._gostInput, getEffectiveTtl(u), env, uid, {
@@ -2316,6 +2346,44 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
     return;
 }
 
+
+
+
+// ==================== YAML 模板管理 ====================
+
+async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
+  let current = null;
+  try { current = await env.KV.get('tmpl:' + uid); } catch {}
+  const hasTmpl = !!current;
+  const text = '\u{1F4DD} <b>YAML \u6A21\u677F\u7BA1\u7406</b>\n\n' +
+    (hasTmpl ? '\u2705 \u5DF2\u8BBE\u7F6E\u81EA\u5B9A\u4E49\u6A21\u677F\n\u70B9\u300C\u7F16\u8F91\u300D\u4FEE\u6539\uFF0C\u70B9\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u6E05\u9664' : '\u26AA \u672A\u8BBE\u7F6E\uFF0C\u5C06\u4F7F\u7528\u5185\u7F6E Clash \u683C\u5F0F') +
+    '\n\n\u683C\u5F0F\u9009\u62E9\u9875\u7684\u300C\u81EA\u5B9A YAML\u300D\u4F1A\u4F7F\u7528\u6B64\u6A21\u677F';
+  const kb = {
+    inline_keyboard: [
+      [{ text: '\u270F\uFE0F \u7F16\u8F91\u6A21\u677F', callback_data: 'tmpl_edit' }],
+      [{ text: '\u{1F504} \u6062\u590D\u9ED8\u8BA4', callback_data: 'tmpl_reset' }],
+      [{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }],
+    ]
+  };
+  return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text, parse_mode: 'HTML', reply_markup: kb });
+}
+
+async function cb_tmpl_edit(env, uid, cid, mid, u, d, q) {
+  u.state = 'TMPL_EDIT';
+  u.promptCid = cid;
+  u.promptMid = mid;
+  return tg('editMessageText', env.BOT_TOKEN, {
+    chat_id: cid, message_id: mid,
+    text: '\u270F\uFE0F \u53D1\u9001\u4F60\u7684 Clash YAML \u6A21\u677F\uFF08\u5B8C\u6574 YAML \u6216\u53EA\u8981 proxy-groups/rules \u90E8\u5206\uFF09\n\n\u793A\u4F8B\uFF1A\nproxy-groups:\n  - name: \u81EA\u52A8\u9009\u62E9\n    type: url-test\n    proxies:\n      - \u8282\u70B91\nrules:\n  - MATCH,DIRECT',
+    parse_mode: 'HTML',
+    reply_markup: { inline_keyboard: [[{ text: '\u2716 \u53D6\u6D88', callback_data: 'tmpl_menu' }]] },
+  });
+}
+
+async function cb_tmpl_reset(env, uid, cid, mid, u, d, q) {
+  await env.KV.delete('tmpl:' + uid).catch(() => {});
+  return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
+}
 
 
   // ==================== Worker 入口 ====================
