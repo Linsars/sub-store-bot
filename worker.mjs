@@ -173,7 +173,7 @@ function parseClashYaml(text) {
   const proxyIdx = text.indexOf('\nproxies:');
   if (proxyIdx === -1) return proxies;
   let remaining = text.slice(proxyIdx + 10);
-  const entries = remaining.split(/\n    - name: /);
+  const entries = remaining.split(/\n(?: {2,4})- name: /);
   for (let i = 1; i < entries.length; i++) {
     let entry = entries[i];
     let nameLine = entry.split('\n')[0];
@@ -183,7 +183,7 @@ function parseClashYaml(text) {
     const lines = entry.split('\n');
     for (let l = 1; l < lines.length; l++) {
       const line = lines[l];
-      if (!line.match(/^\s{6}/) && line.includes(':') && l > 1) break;
+      if (!line.match(/^\s{4,6}/) && line.includes(':') && l > 1) break;
       const match = line.match(/^\s{4,6}(\w[\w-]*?):\s*(.*?)\s*$/);
       if (!match) continue;
       const k = match[1];
