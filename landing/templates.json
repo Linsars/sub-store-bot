@@ -3,4 +3,8 @@
     "file": "noom.ini",
     "name": "NooM 规则集"
   }
+  {
+    "file": "测试Linsar-Egern.yaml",
+    "name": "测试egern"
+  }
 ]
