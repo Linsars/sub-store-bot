@@ -1291,8 +1291,11 @@ async function onMsg(msg, env) {
       if (parsed.name) tmplName = parsed.name;
       if (parsed.text) tmplText = parsed.text;
     } catch {}
-    await env.KV.put('tmpl:' + uid, JSON.stringify({ name: tmplName, text: tmplText }));
-    return replyMsg(env, uid, cid, '✅ YAML 模板已保存：' + tmplName, mainKb());
+    let templates = [];
+    try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+    templates.push({ name: tmplName, text: tmplText, active: false });
+    await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
+    return replyMsg(env, uid, cid, '✅ 模板已添加：' + tmplName + '\n去 YAML 模板管理切换', mainKb());
   }
 
   // 备注模式 — 只改 preview（列表名字），不碰短链内容
@@ -1463,9 +1466,9 @@ async function onCb(q, env) {
   if (d.startsWith('tmpl_')) {
     if (d === 'tmpl_menu') return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
     if (d === 'tmpl_edit') return cb_tmpl_edit(env, uid, cid, mid, u, d, q);
-    if (d === 'tmpl_reset') return cb_tmpl_reset(env, uid, cid, mid, u, d, q);
-    if (d === 'tmpl_builtin_default') return cb_tmpl_builtin_default(env, uid, cid, mid, u, d, q);
-    if (d === 'tmpl_builtin_noom') return cb_tmpl_builtin_noom(env, uid, cid, mid, u, d, q);
+    if (d.startsWith('tmpl_select_b:')) return cb_tmpl_select_b(env, uid, cid, mid, u, d, q);
+    if (d.startsWith('tmpl_select_u:')) return cb_tmpl_select_u(env, uid, cid, mid, u, d, q);
+    if (d.startsWith('tmpl_del:')) return cb_tmpl_del(env, uid, cid, mid, u, d, q);
   }
   if (d.startsWith('conv_fmt:')) return cb_conv_fmt(env, uid, cid, mid, u, d, q);
 }
@@ -2408,25 +2411,39 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
 
 async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
-  let current = null;
-  try { current = await env.KV.get('tmpl:' + uid); } catch {}
-  const hasCustom = !!current;
-  let currentName = '\u5185\u7F6E Clash';
-  if (hasCustom) {
-    try { currentName = JSON.parse(current).name || '\u81EA\u5B9A\u4E49'; } catch { currentName = '\u81EA\u5B9A\u4E49'; }
+  let templates = [];
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+  // 加入内置模板
+  const builtins = [
+    { name: '内置 Clash YAML', text: '__BUILTIN__', builtin: true },
+    { name: 'NooM 规则集', text: '__NOOM__', builtin: true },
+  ];
+  const all = [...builtins, ...templates];
+  const activeIdx = templates.findIndex(t => t.active);
+  const lines = ['\u{1F4DD} <b>YAML 模板管理</b>', ''];
+  const rows = [];
+  // 内置模板
+  for (let i = 0; i < builtins.length; i++) {
+    const t = builtins[i];
+    const isActive = activeIdx === -1 && i === 0; // 无自定义时默认第一个
+    const icon = isActive ? '\u25CF' : '\u25CB';
+    lines.push(icon + ' ' + t.name);
+    rows.push([{ text: (isActive ? '\u2705 ' : '') + t.name, callback_data: 'tmpl_select_b:' + i }]);
   }
-  const text = '\u{1F4DD} <b>YAML \u6A21\u677F\u7BA1\u7406</b>\n\n' +
-    '\u5F53\u524D\u4F7F\u7528\uFF1A<b>' + currentName + '</b>' +
-    '\n\n\u9009\u62E9\u5185\u7F6E\u6A21\u677F\u6216\u81EA\u5B9A\u4E49\uFF1A';
-  const kb = {
-    inline_keyboard: [
-      [{ text: '\u{1F4CB} \u5185\u7F6E Clash YAML', callback_data: 'tmpl_builtin_default' }],
-      [{ text: '\u{1F30D} NooM \u89C4\u5219\u96C6', callback_data: 'tmpl_builtin_noom' }],
-      [{ text: '\u270F\uFE0F \u81EA\u5B9A\u4E49\u6A21\u677F', callback_data: 'tmpl_edit' }],
-      [{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }],
-    ]
-  };
-  return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text, parse_mode: 'HTML', reply_markup: kb });
+  // 用户模板
+  for (let i = 0; i < templates.length; i++) {
+    const t = templates[i];
+    const isActive = activeIdx === i;
+    const icon = isActive ? '\u25CF' : '\u25CB';
+    lines.push(icon + ' ' + t.name);
+    rows.push([
+      { text: (isActive ? '\u2705 ' : '') + t.name, callback_data: 'tmpl_select_u:' + i },
+      { text: '\u2716', callback_data: 'tmpl_del:' + i },
+    ]);
+  }
+  lines.push('', '\u70B9击切换模板，\u2716 删除用户模板');
+  const kb = { inline_keyboard: [...rows, [{ text: '+ 添加模板', callback_data: 'tmpl_edit' }], [{ text: '\u2190 返回', callback_data: 'menu' }]] };
+  return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text: lines.join('\n'), parse_mode: 'HTML', reply_markup: kb });
 }
 
 async function cb_tmpl_edit(env, uid, cid, mid, u, d, q) {
@@ -2441,43 +2458,32 @@ async function cb_tmpl_edit(env, uid, cid, mid, u, d, q) {
   });
 }
 
-async function cb_tmpl_reset(env, uid, cid, mid, u, d, q) {
-  await env.KV.delete('tmpl:' + uid).catch(() => {});
+async function cb_tmpl_select_b(env, uid, cid, mid, u, d, q) {
+  const idx = parseInt(d.split(':')[1]);
+  // 内置模板：清除用户模板的 active 标志
+  let templates = [];
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+  templates.forEach(t => t.active = false);
+  await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
   return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
 }
 
-
-
-async function cb_tmpl_builtin_default(env, uid, cid, mid, u, d, q) {
-  await env.KV.delete('tmpl:' + uid).catch(() => {});
-  return tg('editMessageText', env.BOT_TOKEN, {
-    chat_id: cid, message_id: mid,
-    text: '\u2705 \u5DF2\u5207\u6362\u5230 <b>\u5185\u7F6E Clash YAML</b>',
-    parse_mode: 'HTML',
-    reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u7BA1\u7406', callback_data: 'tmpl_menu' }]] },
-  });
+async function cb_tmpl_select_u(env, uid, cid, mid, u, d, q) {
+  const idx = parseInt(d.split(':')[1]);
+  let templates = [];
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+  templates.forEach((t, i) => t.active = (i === idx));
+  await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
+  return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
 }
 
-async function cb_tmpl_builtin_noom(env, uid, cid, mid, u, d, q) {
-  let noomText = '';
-  try {
-    const resp = await fetch('https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/noom.ini');
-    if (resp.ok) noomText = await resp.text();
-  } catch {}
-  if (!noomText) {
-    return tg('editMessageText', env.BOT_TOKEN, {
-      chat_id: cid, message_id: mid,
-      text: '\u274C \u65E0\u6CD5\u52A0\u8F7D NooM \u6A21\u677F',
-      reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE', callback_data: 'tmpl_menu' }]] },
-    });
-  }
-  await env.KV.put('tmpl:' + uid, JSON.stringify({ name: 'NooM', text: noomText }));
-  return tg('editMessageText', env.BOT_TOKEN, {
-    chat_id: cid, message_id: mid,
-    text: '\u2705 \u5DF2\u5207\u6362\u5230 <b>NooM \u89C4\u5219\u96C6</b>\n\u5305\u542B\u5B8C\u6574 DNS/Rule \u914D\u7F6E',
-    parse_mode: 'HTML',
-    reply_markup: { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u7BA1\u7406', callback_data: 'tmpl_menu' }]] },
-  });
+async function cb_tmpl_del(env, uid, cid, mid, u, d, q) {
+  const idx = parseInt(d.split(':')[1]);
+  let templates = [];
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
+  templates.splice(idx, 1);
+  await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
+  return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
 }
 
 
