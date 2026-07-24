@@ -2387,6 +2387,28 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
 
 
+async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
+  let current = null;
+  try { current = await env.KV.get('tmpl:' + uid); } catch {}
+  const hasCustom = !!current;
+  let currentName = '\u5185\u7F6E Clash';
+  if (hasCustom) {
+    try { currentName = JSON.parse(current).name || '\u81EA\u5B9A\u4E49'; } catch { currentName = '\u81EA\u5B9A\u4E49'; }
+  }
+  const text = '\u{1F4DD} <b>YAML \u6A21\u677F\u7BA1\u7406</b>\n\n' +
+    '\u5F53\u524D\u4F7F\u7528\uFF1A<b>' + currentName + '</b>' +
+    '\n\n\u9009\u62E9\u5185\u7F6E\u6A21\u677F\u6216\u81EA\u5B9A\u4E49\uFF1A';
+  const kb = {
+    inline_keyboard: [
+      [{ text: '\u{1F4CB} \u5185\u7F6E Clash YAML', callback_data: 'tmpl_builtin_default' }],
+      [{ text: '\u{1F30D} NooM \u89C4\u5219\u96C6', callback_data: 'tmpl_builtin_noom' }],
+      [{ text: '\u270F\uFE0F \u81EA\u5B9A\u4E49\u6A21\u677F', callback_data: 'tmpl_edit' }],
+      [{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }],
+    ]
+  };
+  return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text, parse_mode: 'HTML', reply_markup: kb });
+}
+
 async function cb_tmpl_edit(env, uid, cid, mid, u, d, q) {
   u.state = 'TMPL_EDIT';
   u.promptCid = cid;
