@@ -180,16 +180,6 @@ function parseProxiesWithSurge(text, skipSurge) {
   }
   return { proxies: [], debug: debug.join(", ") };
 }
-  try {
-    const r = ProxyUtils.parse(text);
-    debug.push("engine=" + (r ? r.length : "null"));
-    if (r && r.length > 0) return { proxies: r, debug: debug.join(", ") };
-  } catch (e) {
-    debug.push("engine_err=" + e.message);
-    return { proxies: [], debug: debug.join(", ") };
-  }
-  return { proxies: [], debug: debug.join(", ") };
-}
 
 // ==================== 国家旗帜 ====================
 
