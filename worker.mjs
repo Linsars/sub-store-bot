@@ -2259,7 +2259,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       // 智能模板替换：找到 proxies: 段，替换其中的节点内容
       let templates = [];
       try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
-      const activeTmpl = templates.find(t => t.active);
+      let activeTmpl = templates.find(t => t.active);
       if (!activeTmpl) {
         let builtinIdx = 0;
         try { builtinIdx = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch {}
