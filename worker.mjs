@@ -172,67 +172,51 @@ function parseProxiesWithSurge(text, skipSurge) {
 
 function parseClashYaml(text) {
   const proxies = [];
-  const proxyIdx = text.indexOf('\nproxies:');
+  // Find proxies: section (with or without leading newline)
+  let proxyIdx = text.indexOf('\nproxies:');
+  if (proxyIdx === -1 && text.trimStart().startsWith('proxies:')) proxyIdx = 0;
   if (proxyIdx === -1) return proxies;
-  let remaining = text.slice(proxyIdx + 10);
-  const entries = remaining.split(/\n    - name: /);
-  for (let i = 1; i < entries.length; i++) {
-    let entry = entries[i];
-    let nameLine = entry.split('\n')[0];
-    let name = nameLine.replace(/^['"](.*)['"]$/, '$1').trim();
-    if (!name) continue;
-    const proxy = { name, type: '', server: '', port: 0 };
-    const lines = entry.split('\n');
-    for (let l = 1; l < lines.length; l++) {
-      const line = lines[l];
-      if (!line.match(/^\s{6}/) && line.includes(':') && l > 1) break;
-      const match = line.match(/^\s{4,6}(\w[\w-]*?):\s*(.*?)\s*$/);
-      if (!match) continue;
-      const k = match[1];
-      let v = match[2].trim().replace(/^['"](.*)['"]$/, '$1');
-      switch (k) {
-        case 'type': proxy.type = v.toLowerCase(); break;
-        case 'server': proxy.server = v; break;
-        case 'port': proxy.port = parseInt(v, 10) || 0; break;
-        case 'password': proxy.password = v; break;
-        case 'cipher': proxy.cipher = v; break;
-        case 'uuid': proxy.uuid = v; break;
-        case 'sni': proxy.sni = v; break;
-        case 'network': proxy.network = v; break;
-        case 'flow': proxy.flow = v; break;
-        case 'alpn': proxy.alpn = typeof v === 'string' ? v.split(',').map(s => s.trim().replace(/^['"](.*)['"]$/, '$1')) : v; break;
-        case 'client-fingerprint': proxy['client-fingerprint'] = v; break;
-        case 'servername': proxy.servername = v; break;
-        case 'skip-cert-verify': proxy['skip-cert-verify'] = v === 'true' || v === true; break;
-        case 'udp': proxy.udp = v === 'true' || v === true; break;
-        case 'tfo': proxy.tfo = v === 'true' || v === true; break;
-        case 'tls': proxy.tls = v === 'true' || v === true; break;
-        case 'reality': proxy.reality = v === 'true' || v === true; break;
-        default:
-          // 将 YAML 布尔值字符串转为 JS 布尔
-          if (v === 'true') proxy[k] = true;
-          else if (v === 'false') proxy[k] = false;
-          else proxy[k] = v;
-          break;
-      }
+  let remaining = proxyIdx === 0 ? text.slice(9) : text.slice(proxyIdx + 10);
+  // Find all "- name:" entries (2 or 4 space indent)
+  const nameRe = /^\s{2,4}- name: (.+)$/gm;
+  let m;
+  const entries = [];
+  while ((m = nameRe.exec(remaining)) !== null) {
+    entries.push({ start: m.index, name: m[1].trim().replace(/^['"]|['"]$/g, '') });
+  }
+  for (let i = 0; i < entries.length; i++) {
+    const start = entries[i].start;
+    const end = i + 1 < entries.length ? entries[i + 1].start : remaining.indexOf('\nproxy-groups:');
+    const block = remaining.slice(start, end > 0 ? end : undefined);
+    const proxy = { name: entries[i].name, type: '', server: '', port: 0 };
+    const fieldRe = /^\s{4,8}([\w][\w-]*?):\s*(.+)$/gm;
+    let fm;
+    while ((fm = fieldRe.exec(block)) !== null) {
+      const k = fm[1];
+      let v = fm[2].trim().replace(/^['"]|['"]$/g, '');
+      if (k === 'type') proxy.type = v.toLowerCase();
+      else if (k === 'server') proxy.server = v;
+      else if (k === 'port') proxy.port = parseInt(v, 10) || 0;
+      else if (k === 'password') proxy.password = v;
+      else if (k === 'uuid') proxy.uuid = v;
+      else if (k === 'cipher') proxy.cipher = v;
+      else if (k === 'sni' || k === 'servername') proxy.sni = v;
+      else if (k === 'network') proxy.network = v;
+      else if (k === 'flow') proxy.flow = v;
+      else if (k === 'tls') proxy.tls = v === 'true' || v === true;
+      else if (k === 'udp') proxy.udp = v === 'true' || v === true;
+      else if (k === 'skip-cert-verify') proxy['skip-cert-verify'] = v === 'true' || v === true;
+      else if (k === 'alpn') proxy.alpn = typeof v === 'string' ? v.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')) : v;
+      else if (k === 'client-fingerprint') proxy['client-fingerprint'] = v;
+      else if (k === 'tfo') proxy.tfo = v === 'true' || v === true;
+      else if (k === 'reality') proxy.reality = v === 'true' || v === true;
+      else if (v === 'true') proxy[k] = true;
+      else if (v === 'false') proxy[k] = false;
+      else proxy[k] = v;
     }
-    if (proxy.type) {
-      // 类 GA 归一化：补充引擎 produce 所需的隐式字段
+    if (proxy.type && proxy.server && proxy.port) {
+      // Normalize: fill implicit fields for engine compatibility
       if (!proxy.network && ['trojan','vless','vmess'].includes(proxy.type)) proxy.network = 'tcp';
-      if (['trojan','anytls','hysteria2','tuic','juicity','naive','trusttunnel'].includes(proxy.type)) {
-        if (proxy.tls === undefined) proxy.tls = true;
-      }
-      if (proxy.tls) {
-        proxy.sni ||= proxy.servername || proxy.server;
-      }
-      if (proxy.type === 'vmess') { proxy.cipher ||= 'none'; proxy.alterId ??= 0; }
-      // 嵌套结构未解析成功时，降级 transport 避免引擎产空对象
-      if (proxy.network && !['tcp','udp'].includes(proxy.network)) {
-        const req = { ws: 'ws-opts', h2: 'h2-opts', http: 'http-opts', grpc: 'grpc-opts' }[proxy.network];
-        if (req && (!proxy[req] || proxy[req] === '')) {
-          proxy.network = 'tcp';
-        }
-      }
       proxies.push(proxy);
     }
   }
@@ -1278,8 +1262,8 @@ async function onMsg(msg, env) {
       try {
         const resp = await fetch(input);
         if (resp.ok) {
-          const noomParsed = parseTemplate(await resp.text());
-      tmplText = JSON.stringify({ name: 'NooM', prefix: noomParsed.prefix || '', suffix: noomParsed.suffix || '', proxyKeys: noomParsed.proxyKeys || [], proxyFormat: noomParsed.proxyFormat || 'block' });
+          const noomCleaned = cleanYamlForTemplate(await resp.text());
+          tmplText = noomCleaned;
           // 从 URL 提取模板名
           const urlParts = input.split('/');
           tmplName = urlParts[urlParts.length - 1].replace(/\.[^.]+$/, '') || 'URL 导入';
@@ -1295,8 +1279,8 @@ async function onMsg(msg, env) {
     let templates = [];
     try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
     templates.push({ name: tmplName, text: tmplText, active: false });
-    const parsed = parseTemplate(tmplText);
-    tmplText = JSON.stringify({ name: tmplName, prefix: parsed.prefix || '', suffix: parsed.suffix || '', proxyKeys: parsed.proxyKeys || [], proxyFormat: parsed.proxyFormat || 'block' });
+    const cleanedTmpl = cleanYamlForTemplate(tmplText);
+    tmplText = cleanedTmpl;
     await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
     return replyMsg(env, uid, cid, '✅ 模板已添加：' + tmplName + '\n去 YAML 模板管理切换', mainKb());
   }
@@ -1485,6 +1469,7 @@ async function cb_menu(env, uid, cid, mid, u, d, q) {
   u._collected = null;
   u._collectMode = null;
   u._fmtMsg = null; u._lastProxies = null; u._lastSubInput = null;
+  u._isGost = null; u._gostInput = null; u._gostCount = null; u._lastStats = null; u._lastFetchUa = null;
   return tg('editMessageText', env.BOT_TOKEN, {
       chat_id: cid,
       message_id: mid,
@@ -2269,7 +2254,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
         try {
           let tmplText = activeTmpl.text;
           if (tmplText === '__NOOM__') {
-            const resp = await fetch('https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/noom.ini');
+            const resp = await fetch('https://raw.githubusercontent.com/Linsars/sub-store-bot/main/yaml/noom.ini');
             if (resp.ok) tmplText = await resp.text();
           }
           if (tmplText && tmplText.includes('proxies:')) {
@@ -2551,6 +2536,19 @@ async function cb_tmpl_del(env, uid, cid, mid, u, d, q) {
 }
 
 
+
+// Clean YAML template: remove proxies section content
+function cleanYamlForTemplate(text) {
+  if (!text || !text.includes('proxies:')) return text;
+  const ls = text.split('\n');
+  let ps = -1, pe = ls.length;
+  for (let i = 0; i < ls.length; i++) {
+    if (/^proxies:\s*$/.test(ls[i])) { ps = i; continue; }
+    if (ps >= 0 && /^\w/.test(ls[i]) && !/^\s/.test(ls[i])) { pe = i; break; }
+  }
+  if (ps >= 0) ls.splice(ps + 1, pe - ps - 1);
+  return ls.join('\n');
+}
 
 function parseTemplate(tmplText) {
   if (!tmplText || !tmplText.includes('proxies:')) return { raw: tmplText };
@@ -2961,48 +2959,3 @@ export default {
   },
 };
 // Simple Clash YAML proxies extractor
-function parseClashYamlSimple(text) {
-  const proxies = [];
-  // Find proxies: section (with or without leading newline)
-  let idx = text.indexOf('\nproxies:');
-  if (idx === -1 && text.startsWith('proxies:')) idx = 0;
-  if (idx === -1) return proxies;
-  let rest = idx === 0 ? text.slice(9) : text.slice(idx + 11);
-  // Find all "- name:" entries (2-space indent)
-  const nameRe = /^\s{2,4}- name: (.+)$/gm;
-  let m;
-  const entries = [];
-  while ((m = nameRe.exec(rest)) !== null) {
-    entries.push({ start: m.index, name: m[1].trim().replace(/^['"]|['"]$/g, '') });
-  }
-  for (let i = 0; i < entries.length; i++) {
-    const start = entries[i].start;
-    const end = i + 1 < entries.length ? entries[i + 1].start : rest.indexOf('\nproxy-groups:');
-    const block = rest.slice(start, end > 0 ? end : undefined);
-    const proxy = { name: entries[i].name, type: '', server: '', port: 0 };
-    // Match fields: 4-8 spaces indent to handle nested objects like ws-opts
-    const fieldRe = /^\s{4,8}([\w-]+):\s*(.+)$/gm;
-    let fm;
-    while ((fm = fieldRe.exec(block)) !== null) {
-      const k = fm[1];
-      let v = fm[2].trim().replace(/^['"]|['"]$/g, '');
-      if (k === 'type') proxy.type = v;
-      else if (k === 'server') proxy.server = v;
-      else if (k === 'port') proxy.port = parseInt(v, 10) || 0;
-      else if (k === 'password') proxy.password = v;
-      else if (k === 'uuid') proxy.uuid = v;
-      else if (k === 'cipher') proxy.cipher = v;
-      else if (k === 'sni' || k === 'servername') proxy.sni = v;
-      else if (k === 'network') proxy.network = v;
-      else if (k === 'tls') proxy.tls = v === 'true';
-      else if (k === 'udp') proxy.udp = v === 'true';
-      else if (k === 'skip-cert-verify') proxy['skip-cert-verify'] = v === 'true';
-      else if (k === 'alpn') proxy.alpn = v.split(',').map(s => s.trim());
-      else if (k === 'flow') proxy.flow = v;
-      else if (k === 'client-fingerprint') proxy['client-fingerprint'] = v;
-      else proxy[k] = v;
-    }
-    if (proxy.type && proxy.server && proxy.port) proxies.push(proxy);
-  }
-  return proxies;
-}
