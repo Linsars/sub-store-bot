@@ -99,6 +99,8 @@ async function safeExecute(fn, env, uid, cid, mid = null, context = '') {
   }
 }
 
+
+
 // ==================== Surge 格式行解析 ====================
 
 function parseSurgeLines(text) {
@@ -161,56 +163,124 @@ function parseProxiesWithSurge(text, skipSurge) {
     const { proxies: surge } = parseSurgeLines(text);
     if (surge.length > 0) return surge;
   }
-  // ProxyUtils.parse
+  // parseClashYaml 优先（快 20-30 倍，CF Workers 10s 限制必须）
+  try { const y = parseClashYaml(text); if (y.length > 0) return y; } catch {}
+  // ProxyUtils.parse 兜底（慢但全，处理非 YAML 格式）
   try { const r = ProxyUtils.parse(text); if (r && r.length > 0) return r; } catch {}
-  // Fallback: simple YAML proxies extractor
-  try { const y = parseClashYamlSimple(text); if (y.length > 0) return y; } catch {}
   return [];
 }
 
-// Simple Clash YAML proxies extractor - handles standard 2/4-space indented YAML
-function parseClashYamlSimple(text) {
+function parseClashYaml(text) {
   const proxies = [];
-  const idx = text.indexOf('\nproxies:');
-  if (idx === -1) return proxies;
-  let rest = text.slice(idx + 11); // skip "\nproxies:\n"
-  // Find all "- name:" entries
-  const nameRe = /^\s{2,4}- name: (.+)$/gm;
-  let m;
-  const entries = [];
-  while ((m = nameRe.exec(rest)) !== null) {
-    entries.push({ start: m.index, name: m[1].trim().replace(/^['"]|['"]$/g, '') });
-  }
-  for (let i = 0; i < entries.length; i++) {
-    const start = entries[i].start;
-    const end = i + 1 < entries.length ? entries[i + 1].start : rest.indexOf('\nproxy-groups:');
-    const block = rest.slice(start, end > 0 ? end : undefined);
-    const proxy = { name: entries[i].name, type: '', server: '', port: 0 };
-    const fieldRe = /^\s{4,6}([\w-]+):\s*(.+)$/gm;
-    let fm;
-    while ((fm = fieldRe.exec(block)) !== null) {
-      const k = fm[1];
-      let v = fm[2].trim().replace(/^['"]|['"]$/g, '');
-      if (k === 'type') proxy.type = v;
-      else if (k === 'server') proxy.server = v;
-      else if (k === 'port') proxy.port = parseInt(v, 10) || 0;
-      else if (k === 'password') proxy.password = v;
-      else if (k === 'uuid') proxy.uuid = v;
-      else if (k === 'cipher') proxy.cipher = v;
-      else if (k === 'sni' || k === 'servername') proxy.sni = v;
-      else if (k === 'network') proxy.network = v;
-      else if (k === 'tls') proxy.tls = v === 'true';
-      else if (k === 'udp') proxy.udp = v === 'true';
-      else if (k === 'skip-cert-verify') proxy['skip-cert-verify'] = v === 'true';
-      else if (k === 'alpn') proxy.alpn = v.split(',').map(s => s.trim());
-      else if (k === 'flow') proxy.flow = v;
-      else if (k === 'client-fingerprint') proxy['client-fingerprint'] = v;
-      else proxy[k] = v;
+  const proxyIdx = text.indexOf('\nproxies:');
+  if (proxyIdx === -1) return proxies;
+  let remaining = text.slice(proxyIdx + 10);
+  const entries = remaining.split(/\n    - name: /);
+  for (let i = 1; i < entries.length; i++) {
+    let entry = entries[i];
+    let nameLine = entry.split('\n')[0];
+    let name = nameLine.replace(/^['"](.*)['"]$/, '$1').trim();
+    if (!name) continue;
+    const proxy = { name, type: '', server: '', port: 0 };
+    const lines = entry.split('\n');
+    for (let l = 1; l < lines.length; l++) {
+      const line = lines[l];
+      if (!line.match(/^\s{6}/) && line.includes(':') && l > 1) break;
+      const match = line.match(/^\s{4,6}(\w[\w-]*?):\s*(.*?)\s*$/);
+      if (!match) continue;
+      const k = match[1];
+      let v = match[2].trim().replace(/^['"](.*)['"]$/, '$1');
+      switch (k) {
+        case 'type': proxy.type = v.toLowerCase(); break;
+        case 'server': proxy.server = v; break;
+        case 'port': proxy.port = parseInt(v, 10) || 0; break;
+        case 'password': proxy.password = v; break;
+        case 'cipher': proxy.cipher = v; break;
+        case 'uuid': proxy.uuid = v; break;
+        case 'sni': proxy.sni = v; break;
+        case 'network': proxy.network = v; break;
+        case 'flow': proxy.flow = v; break;
+        case 'alpn': proxy.alpn = typeof v === 'string' ? v.split(',').map(s => s.trim().replace(/^['"](.*)['"]$/, '$1')) : v; break;
+        case 'client-fingerprint': proxy['client-fingerprint'] = v; break;
+        case 'servername': proxy.servername = v; break;
+        case 'skip-cert-verify': proxy['skip-cert-verify'] = v === 'true' || v === true; break;
+        case 'udp': proxy.udp = v === 'true' || v === true; break;
+        case 'tfo': proxy.tfo = v === 'true' || v === true; break;
+        case 'tls': proxy.tls = v === 'true' || v === true; break;
+        case 'reality': proxy.reality = v === 'true' || v === true; break;
+        default:
+          // 将 YAML 布尔值字符串转为 JS 布尔
+          if (v === 'true') proxy[k] = true;
+          else if (v === 'false') proxy[k] = false;
+          else proxy[k] = v;
+          break;
+      }
     }
-    if (proxy.type && proxy.server && proxy.port) proxies.push(proxy);
+    if (proxy.type) {
+      // 类 GA 归一化：补充引擎 produce 所需的隐式字段
+      if (!proxy.network && ['trojan','vless','vmess'].includes(proxy.type)) proxy.network = 'tcp';
+      if (['trojan','anytls','hysteria2','tuic','juicity','naive','trusttunnel'].includes(proxy.type)) {
+        if (proxy.tls === undefined) proxy.tls = true;
+      }
+      if (proxy.tls) {
+        proxy.sni ||= proxy.servername || proxy.server;
+      }
+      if (proxy.type === 'vmess') { proxy.cipher ||= 'none'; proxy.alterId ??= 0; }
+      // 嵌套结构未解析成功时，降级 transport 避免引擎产空对象
+      if (proxy.network && !['tcp','udp'].includes(proxy.network)) {
+        const req = { ws: 'ws-opts', h2: 'h2-opts', http: 'http-opts', grpc: 'grpc-opts' }[proxy.network];
+        if (req && (!proxy[req] || proxy[req] === '')) {
+          proxy.network = 'tcp';
+        }
+      }
+      proxies.push(proxy);
+    }
   }
   return proxies;
 }
+
+// ==================== 国家旗帜 ====================
+
+function addFlag(name) {
+  name = String(name || '').trim() || '未命名';
+  if (/[\u{1F1E6}-\u{1F1FF}]{2}/u.test(name)) return name;
+  const rules = [
+    [/(\b|[^A-Za-z])(HK|Hong Kong|香港|深港|广港|沪港)(\b|[^A-Za-z])/i, '\u{1F1ED}\u{1F1F0}'],
+    [/(\b|[^A-Za-z])(TW|Taiwan|台湾|台灣|台北|新北|广台)(\b|[^A-Za-z])/i, '\u{1F1F9}\u{1F1FC}'],
+    [/(\b|[^A-Za-z])(JP|Japan|日本|东京|大阪|埼玉|广日)(\b|[^A-Za-z])/i, '\u{1F1EF}\u{1F1F5}'],
+    [/(\b|[^A-Za-z])(SG|Singapore|新加坡|狮城|广新)(\b|[^A-Za-z])/i, '\u{1F1F8}\u{1F1EC}'],
+    [/(\b|[^A-Za-z])(KR|Korea|韩国|首尔|春川|广韩)(\b|[^A-Za-z])/i, '\u{1F1F0}\u{1F1F7}'],
+    [/(\b|[^A-Za-z])(US|America|United States|美国|洛杉矶|圣何塞|纽约|西雅图|芝加哥|波特兰|达拉斯|广美)(\b|[^A-Za-z])/i, '\u{1F1FA}\u{1F1F8}'],
+    [/(\b|[^A-Za-z])(UK|Britain|英国|伦敦)(\b|[^A-Za-z])/i, '\u{1F1EC}\u{1F1E7}'],
+    [/(\b|[^A-Za-z])(FR|France|法国|巴黎)(\b|[^A-Za-z])/i, '\u{1F1EB}\u{1F1F7}'],
+    [/(\b|[^A-Za-z])(DE|Germany|德国|法兰克福)(\b|[^A-Za-z])/i, '\u{1F1E9}\u{1F1EA}'],
+    [/(\b|[^A-Za-z])(NL|Netherlands|荷兰|阿姆斯特丹)(\b|[^A-Za-z])/i, '\u{1F1F3}\u{1F1F1}'],
+    [/(\b|[^A-Za-z])(RU|Russia|俄罗斯|莫斯科)(\b|[^A-Za-z])/i, '\u{1F1F7}\u{1F1FA}'],
+    [/(\b|[^A-Za-z])(IN|India|印度|孟买)(\b|[^A-Za-z])/i, '\u{1F1EE}\u{1F1F3}'],
+    [/(\b|[^A-Za-z])(AU|Australia|澳大利亚|悉尼)(\b|[^A-Za-z])/i, '\u{1F1E6}\u{1F1FA}'],
+    [/(\b|[^A-Za-z])(CA|Canada|加拿大|蒙特利尔)(\b|[^A-Za-z])/i, '\u{1F1E8}\u{1F1E6}'],
+  ];
+  for (const [r, f] of rules) if (r.test(name)) return f + ' ' + name;
+  return name;
+}
+
+function isSs2022Cipher(cipher) {
+  const c = String(cipher || '').trim().toLowerCase();
+  return ['2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm', '2022-blake3-chacha20-poly1305'].includes(c);
+}
+
+
+// ==================== 本地订阅收集系统 ====================
+
+function collectionText(collection) {
+  const items = collection?.items || [];
+  const mode = collection?.mode || 'file';
+  let lines = ['\u{1F4C1} ' + (mode === 'url' ? '远程订阅收集' : '本地订阅') + '  \u26A0\uFE0F 数据临时有效，请尽快处理', ''];
+  lines.push('\u{1F4CA} 已收集: ' + items.length + ' \u6761');
+  if (items.length === 0) {
+    lines.push('');
+    lines.push(mode === 'url' ? '请发送订阅链接' : '请发送节点文件或粘贴订阅内容');
+  } else {
     lines.push('');
     items.forEach((item, i) => {
       const prefix = (i + 1) + '.\u3000';
@@ -754,6 +824,8 @@ function deduplicateProxies(proxies) {
   });
 }
 
+
+
 // ==================== 编辑提示消息或发新消息 ====================
 
 async function replyOrEdit(u, cid, env, opts) {
@@ -763,7 +835,7 @@ async function replyOrEdit(u, cid, env, opts) {
     try {
       const raw = await env.KV.get('prompt:' + (u._uid || ''), { type: 'json' });
       if (raw && raw.cid && raw.mid) { pCid = raw.cid; pMid = raw.mid; }
-    } catch(e) {}
+    } catch {}
   }
   if (pCid && pMid) {
     const r = await tg('editMessageText', env.BOT_TOKEN, {
@@ -1043,7 +1115,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
                 bestUa = r.value.ua;
                 bestParsed = parsed;
               }
-            } catch(e) {}
+            } catch {}
           }
         }
         if (!bestText) {
@@ -1207,24 +1279,24 @@ async function onMsg(msg, env) {
         const resp = await fetch(input);
         if (resp.ok) {
           const noomParsed = parseTemplate(await resp.text());
-      tmplText = JSON.stringify({ name: 'NooM', prefix: noomParsed.prefix || '', suffix: noomParsed.suffix || '', proxyKeys: noomParsed.proxyKeys || [] });
+      tmplText = JSON.stringify({ name: 'NooM', prefix: noomParsed.prefix || '', suffix: noomParsed.suffix || '', proxyKeys: noomParsed.proxyKeys || [], proxyFormat: noomParsed.proxyFormat || 'block' });
           // 从 URL 提取模板名
           const urlParts = input.split('/');
           tmplName = urlParts[urlParts.length - 1].replace(/\.[^.]+$/, '') || 'URL 导入';
         }
-      } catch(e) {}
+      } catch {}
     }
     // 尝试从 JSON 提取名称
     try {
       const parsed = JSON.parse(tmplText);
       if (parsed.name) tmplName = parsed.name;
       if (parsed.text) tmplText = parsed.text;
-    } catch(e) {}
+    } catch {}
     let templates = [];
-    try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
+    try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
     templates.push({ name: tmplName, text: tmplText, active: false });
     const parsed = parseTemplate(tmplText);
-    tmplText = JSON.stringify({ name: tmplName, prefix: parsed.prefix || '', suffix: parsed.suffix || '', proxyKeys: parsed.proxyKeys || [] });
+    tmplText = JSON.stringify({ name: tmplName, prefix: parsed.prefix || '', suffix: parsed.suffix || '', proxyKeys: parsed.proxyKeys || [], proxyFormat: parsed.proxyFormat || 'block' });
     await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
     return replyMsg(env, uid, cid, '✅ 模板已添加：' + tmplName + '\n去 YAML 模板管理切换', mainKb());
   }
@@ -1340,6 +1412,7 @@ async function onMsg(msg, env) {
 
 // ==================== 回调处理 ====================
 
+
 async function onCb(q, env) {
   const uid = String(q.from.id);
   if (!isAllowed(uid, env)) return;
@@ -1403,6 +1476,7 @@ async function onCb(q, env) {
   if (d.startsWith('conv_fmt:')) return cb_conv_fmt(env, uid, cid, mid, u, d, q);
 }
 
+
 // ==================== onCb 路由处理函数 ====================
 
 async function cb_menu(env, uid, cid, mid, u, d, q) {
@@ -1465,7 +1539,6 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
     }
     // ===== 本地文件/文本：继续原有解析流程 =====
     let proxies = [];
-    let _parseDebug = "";
     let gostInput = '';
     for (const item of items) {
       const content = item.content || '';
@@ -1476,11 +1549,11 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
           gostInput += (gostInput ? '\n' : '') + gostParts.join('\n');
         }
         if (restParts.trim().length > 0) {
-          const parsed = parseProxies(restParts).proxies;
+          const parsed = parseProxies(restParts);
           if (parsed && parsed.length > 0) proxies.push(...parsed);
         }
       } else {
-        let parseResult = parseProxies(content); let parsed = parseResult.proxies; _parseDebug += parseResult.debug + "; ";
+        let parsed = parseProxies(content);
         if (parsed && parsed.length > 0) proxies.push(...parsed);
       }
     }
@@ -1509,19 +1582,7 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
           reply_markup: fmtKb(null, null, null, u),
         });
       }
-      // DEBUG: show what went wrong
-      let debugInfo = 'mode=' + mode + ', items=' + items.length;
-      for (const item of items) {
-        const c = item.content || '';
-        debugInfo += ', contentLen=' + c.length;
-        // Check if it has proxies section
-        debugInfo += ', hasProxies=' + c.includes('proxies:');
-        // Check if it has = signs
-        debugInfo += ', hasEq=' + (c.split('\n').filter(l => l.includes('=')).length);
-        // Try to show first 200 chars
-      return editMsg(env, cid, mid, '❌ 无法解析\\n\\n' + debugInfo + '\\nparse: ' + _parseDebug);
-      }
-      return editMsg(env, cid, mid, '❌ 无法解析\n\n' + debugInfo);
+      return editMsg(env, cid, mid, '\u274C 无法从收集的内容中解析出任何节点');
     }
     // 去重
     const mergedStd = deduplicateProxies(proxies).map(p => ({ ...p, name: addFlag(p.name) }));
@@ -1625,7 +1686,7 @@ async function cb_my_links(env, uid, cid, mid, u, d, q) {
         try {
           const raw = await env.KV.get('share_' + l.id, { type: 'json' });
           if (!raw) icon = '\u26AB';
-        } catch(e) {}
+        } catch {}
       }
       const label = l.remark ? icon + ' ' + escapeHTML(l.remark) : icon + ' ' + escapeHTML(l.preview);
       rows.push([{ text: label, callback_data: 'link_' + l.id }]);
@@ -1669,7 +1730,7 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
         accessedCount = Array.isArray(raw.accessedIPs) ? raw.accessedIPs.length : 0;
         accessedLimit = raw.maxAccess || l.maxAccess || 0;
       }
-    } catch(e) {}
+    } catch {}
 
     // 确定生死：KV 被删 = 已消耗阅后即焚/超限
     const isConsumed = !kvAlive && (l.maxAccess > 0 || l.burn);
@@ -1833,6 +1894,7 @@ async function cb_chg_ttl(env, uid, cid, mid, u, d, q) {
     }
     return editMsg(env, cid, mid, '\u2705 \u5DF2\u4FEE\u6539');
 }
+
 
 async function cb_mod_acc(env, uid, cid, mid, u, d, q) {
   const linkId = d.replace('mod_acc_', '');
@@ -2138,7 +2200,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       if (!rawText) {
         // 兜底：从 parsed proxies 拼接
         let std = '';
-        try { std = ProxyUtils.produce(proxiesForConvert, 'uri'); } catch(e) {}
+        try { std = ProxyUtils.produce(proxiesForConvert, 'uri'); } catch {}
         const gostRaw = u._gostInput || '';
         rawText = btoa(unescape(encodeURIComponent([std, gostRaw].filter(Boolean).join('\n'))));
       }
@@ -2196,11 +2258,11 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       }).join('\n');
       // 智能模板替换：找到 proxies: 段，替换其中的节点内容
       let templates = [];
-      try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
+      try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
       let activeTmpl = templates.find(t => t.active);
       if (!activeTmpl) {
         let builtinIdx = 0;
-        try { builtinIdx = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch(e) {}
+        try { builtinIdx = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch {}
         if (builtinIdx === 1) activeTmpl = { text: '__NOOM__' };
       }
       if (activeTmpl && activeTmpl.text) {
@@ -2212,7 +2274,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
           }
           if (tmplText && tmplText.includes('proxies:')) {
             // 检测模板 proxy 格式
-
+            const proxyFormat = /- \{/.test(tmplText.split('proxies:')[1].split('\nproxy-groups')[0] || '') ? 'inline' : 'block';
             const tmplLines = tmplText.split('\n');
             let proxiesStart = -1;
             let proxiesEnd = tmplLines.length;
@@ -2226,7 +2288,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
             if (proxiesStart >= 0) {
               // 生成匹配格式的 proxies
               let proxiesYaml = '';
-              if (false) { // inline removed
+              if (proxyFormat === 'inline') {
                 proxiesYaml = proxiesForConvert.map(p => {
                   const parts = ['name: ' + JSON.stringify(p.name), 'type: ' + p.type, 'server: ' + p.server, 'port: ' + p.port];
                   if (p.password) parts.push('password: ' + p.password);
@@ -2247,7 +2309,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
               output = tmplLines.join('\n');
             }
           }
-        } catch(e) {}
+        } catch {}
       }
     } else {
       // Sub 引擎产出（Surge 特殊处理 WG）
@@ -2338,7 +2400,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       const nonWgCount = proxiesForConvert.filter(p => p.type !== 'wireguard').length;
       if ((fmt === 'surge' || fmt === 'surfboard') && surgeWgAll.length > 0 && output && nonWgCount > 0) {
         let wgYaml;
-        try { wgYaml = ProxyUtils.produce(surgeWgAll, 'clashmeta'); } catch(e) {}
+        try { wgYaml = ProxyUtils.produce(surgeWgAll, 'clashmeta'); } catch {}
         if (!wgYaml) wgYaml = 'proxies:\n' + surgeWgAll.map(p => '  - {name: "' + p.name + '", type: wireguard, server: ' + p.server + '}').join('\n');
         const { url: wgUrl } = await saveToClipAndTrack(String(wgYaml), getEffectiveTtl(u), env, uid, {
           preview: 'WireGuard × ' + surgeWgAll.length + ' (原生 YAML)', nodeCount: surgeWgAll.length, source: 'wg',
@@ -2352,7 +2414,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       const ss2022Nodes = proxiesForConvert.filter(p => p.type === 'ss' && isSs2022Cipher(p.cipher));
       if (ss2022Nodes.length > 0 && fmt !== 'clashmeta' && fmt !== 'native' && fmt !== 'b64') {
         let ss2022Yaml;
-        try { ss2022Yaml = ProxyUtils.produce(ss2022Nodes, 'clashmeta'); } catch(e) {}
+        try { ss2022Yaml = ProxyUtils.produce(ss2022Nodes, 'clashmeta'); } catch {}
         if (!ss2022Yaml) ss2022Yaml = 'proxies:\n' + ss2022Nodes.map(p => '  - {name: "' + p.name + '", type: ss, server: ' + p.server + ', cipher: ' + p.cipher + '}').join('\n');
         const { url: ss2022Url } = await saveToClipAndTrack(String(ss2022Yaml), getEffectiveTtl(u), env, uid, {
           preview: 'SS2022 × ' + ss2022Nodes.length + ' (自定 YAML)', nodeCount: ss2022Nodes.length, source: 'ss2022',
@@ -2399,11 +2461,16 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
     return;
 }
 
+
+
+
 // ==================== YAML 模板管理 ====================
+
+
 
 async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
   let templates = [];
-  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
   // 加入内置模板
   const builtins = [
     { name: '内置 Clash YAML', text: '__BUILTIN__', builtin: true },
@@ -2411,7 +2478,7 @@ async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
   ];
   const all = [...builtins, ...templates];
   let builtinActive = 0;
-  try { builtinActive = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch(e) {}
+  try { builtinActive = parseInt(await env.KV.get('tmpl_active:' + uid)) || 0; } catch {}
   const activeIdx = templates.findIndex(t => t.active);
   const lines = ['\u{1F4DD} <b>YAML 模板管理</b>', ''];
   const rows = [];
@@ -2455,7 +2522,7 @@ async function cb_tmpl_select_b(env, uid, cid, mid, u, d, q) {
   const builtinId = d.split(':')[1];
   // 清除用户模板 active
   let templates = [];
-  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
   templates.forEach(t => t.active = false);
   await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
   // 存储内置模板选择
@@ -2468,7 +2535,7 @@ async function cb_tmpl_select_u(env, uid, cid, mid, u, d, q) {
   // 清除内置模板选择
   await env.KV.delete('tmpl_active:' + uid);
   let templates = [];
-  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
   templates.forEach((t, i) => t.active = (i === idx));
   await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
   return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
@@ -2477,11 +2544,13 @@ async function cb_tmpl_select_u(env, uid, cid, mid, u, d, q) {
 async function cb_tmpl_del(env, uid, cid, mid, u, d, q) {
   const idx = parseInt(d.split(':')[1]);
   let templates = [];
-  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch(e) {}
+  try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
   templates.splice(idx, 1);
   await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
   return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
 }
+
+
 
 function parseTemplate(tmplText) {
   if (!tmplText || !tmplText.includes('proxies:')) return { raw: tmplText };
@@ -2511,8 +2580,9 @@ function parseTemplate(tmplText) {
     }
   }
   const proxyFormat = /^- \{/.test(lines.slice(proxiesStart > 0 ? proxiesStart : 0, proxiesEnd).join("\n")) ? "inline" : "block";
-  return { prefix, suffix, proxyKeys };
+  return { prefix, suffix, proxyKeys, proxyFormat };
 }
+
 
   // ==================== Worker 入口 ====================
 
@@ -2532,7 +2602,7 @@ export default {
       const r = await fetch(target, { headers: { 'User-Agent': 'Karing' } });
       const text = await r.text();
       let count = 0;
-      try { const parsed = ProxyUtils.parse(text); count = parsed?.length || 0; } catch(e) {}
+      try { const parsed = ProxyUtils.parse(text); count = parsed?.length || 0; } catch {}
       return new Response(JSON.stringify({ status: r.status, len: text.length, count }), { headers: { 'Content-Type': 'application/json', ...cors } });
     }
 
@@ -2597,12 +2667,12 @@ export default {
             'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing/index.html';
           const allowedHosts = ['raw.githubusercontent.com', 'github.com', 'github.githubassets.com'];
           let urlOk = false;
-          try { const u = new URL(LANDING_HTML_URL); urlOk = allowedHosts.includes(u.hostname); } catch(e) {}
+          try { const u = new URL(LANDING_HTML_URL); urlOk = allowedHosts.includes(u.hostname); } catch {}
           if (urlOk) {
             try {
               const ghResp = await fetch(LANDING_HTML_URL);
               if (ghResp.ok) { html = await ghResp.text(); await env.KV.put('_landing_v1', html, { expirationTtl: 86400 }); }
-            } catch(e) {}
+            } catch {}
           }
           if (!html) html = '<html><body><h1>Service Unavailable</h1></body></html>';
         }
