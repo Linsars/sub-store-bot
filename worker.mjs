@@ -1278,7 +1278,7 @@ async function onMsg(msg, env) {
       try {
         const resp = await fetch(input);
         if (resp.ok) {
-          tmplText = await resp.text();
+          tmplText = cleanTemplate(await resp.text());
           // 从 URL 提取模板名
           const urlParts = input.split('/');
           tmplName = urlParts[urlParts.length - 1].replace(/\.[^.]+$/, '') || 'URL 导入';
@@ -1294,6 +1294,7 @@ async function onMsg(msg, env) {
     let templates = [];
     try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
     templates.push({ name: tmplName, text: tmplText, active: false });
+    tmplText = cleanTemplate(tmplText);
     await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
     return replyMsg(env, uid, cid, '✅ 模板已添加：' + tmplName + '\n去 YAML 模板管理切换', mainKb());
   }
