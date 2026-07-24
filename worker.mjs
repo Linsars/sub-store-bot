@@ -1279,7 +1279,7 @@ async function onMsg(msg, env) {
         const resp = await fetch(input);
         if (resp.ok) {
           const noomParsed = parseTemplate(await resp.text());
-      tmplText = JSON.stringify({ name: 'NooM', prefix: noomParsed.prefix || '', suffix: noomParsed.suffix || '', proxyKeys: noomParsed.proxyKeys || [] });
+      tmplText = JSON.stringify({ name: 'NooM', prefix: noomParsed.prefix || '', suffix: noomParsed.suffix || '', proxyKeys: noomParsed.proxyKeys || [], proxyFormat: noomParsed.proxyFormat || 'block' });
           // 从 URL 提取模板名
           const urlParts = input.split('/');
           tmplName = urlParts[urlParts.length - 1].replace(/\.[^.]+$/, '') || 'URL 导入';
@@ -1296,7 +1296,7 @@ async function onMsg(msg, env) {
     try { templates = JSON.parse(await env.KV.get('tmpls:' + uid)) || []; } catch {}
     templates.push({ name: tmplName, text: tmplText, active: false });
     const parsed = parseTemplate(tmplText);
-    tmplText = JSON.stringify({ name: tmplName, prefix: parsed.prefix || '', suffix: parsed.suffix || '', proxyKeys: parsed.proxyKeys || [] });
+    tmplText = JSON.stringify({ name: tmplName, prefix: parsed.prefix || '', suffix: parsed.suffix || '', proxyKeys: parsed.proxyKeys || [], proxyFormat: parsed.proxyFormat || 'block' });
     await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
     return replyMsg(env, uid, cid, '✅ 模板已添加：' + tmplName + '\n去 YAML 模板管理切换', mainKb());
   }
@@ -2579,7 +2579,8 @@ function parseTemplate(tmplText) {
       if (inFirstProxy && (/^\s+- name:/.test(l) || (/^\w/.test(l.trimStart()) && !/^\s/.test(l)))) break;
     }
   }
-  return { prefix, suffix, proxyKeys };
+  const proxyFormat = /^- \{/.test(lines.slice(proxiesStart > 0 ? proxiesStart : 0, proxiesEnd).join("\n")) ? "inline" : "block";
+  return { prefix, suffix, proxyKeys, proxyFormat };
 }
 
 
