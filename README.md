@@ -2,6 +2,12 @@
 
 Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 
+![截图1](tools/screenshot1.png)
+![截图2](tools/screenshot2.png)
+![截图3](tools/screenshot3.png)
+
+> 演示视频见 [tools/demo.mp4](tools/demo.mp4)
+
 ---
 
 ## 功能
