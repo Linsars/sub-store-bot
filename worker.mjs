@@ -1,4 +1,4 @@
-/**
+*
 
  * Sub-Store Bot — Telegram 剪贴板 + 订阅转换
 
@@ -28,7 +28,7 @@
 
 import { ProxyUtils } from './proxy-utils.esm.js';
 
-const BOT_VERSION = '2.32.1';
+const BOT_VERSION = '2.33.0';
 
 
 
@@ -334,6 +334,10 @@ function parseProxiesWithSurge(text, skipSurge) {
 
   try { const y = parseClashYaml(text); if (y.length > 0) return y; } catch {}
 
+  // parseSingboxYaml：sing-box/Egern YAML 格式
+
+  try { const s = parseSingboxYaml(text); if (s.length > 0) return s; } catch {}
+
   // ProxyUtils.parse 兜底（慢但全，处理非 YAML 格式）
 
   try { const r = ProxyUtils.parse(text); if (r && r.length > 0) return r; } catch {}
@@ -343,6 +347,114 @@ function parseProxiesWithSurge(text, skipSurge) {
 }
 
 
+
+// ==================== sing-box/Egern YAML 解析器 ====================
+
+function parseSingboxYaml(text) {
+
+  const proxies = [];
+
+  if (!text || !text.includes('proxies:')) return proxies;
+
+  const lines = text.split('\n');
+
+  let inProxies = false;
+
+  let currentProxy = null;
+
+  let currentType = '';
+
+  const typeMap = { shadowsocks: 'ss', vmess: 'vmess', vless: 'vless', trojan: 'trojan', wireguard: 'wireguard', hysteria2: 'hysteria2', tuic: 'tuic', http: 'http', socks5: 'socks5', snell: 'snell' };
+
+  for (let i = 0; i < lines.length; i++) {
+
+    const line = lines[i];
+
+    if (/^proxies:\s*$/.test(line)) { inProxies = true; continue; }
+
+    if (inProxies && /^\S/.test(line) && !line.startsWith('-')) { inProxies = false; continue; }
+
+    if (!inProxies) continue;
+
+    // 顶级列表项：- shadowsocks: 或 - wireguard:
+
+    const topMatch = line.match(/^-\s+(\w+):\s*$/);
+
+    if (topMatch) {
+
+      if (currentProxy && currentProxy.type && currentProxy.server) proxies.push(currentProxy);
+
+      currentType = topMatch[1];
+
+      currentProxy = { name: '', type: typeMap[currentType] || currentType, server: '', port: 0 };
+
+      continue;
+
+    }
+
+    // 子属性：    name: xxx
+
+    if (currentProxy && /^\s{2,}\S/.test(line)) {
+
+      const km = line.match(/^\s+(\S[\w-]*):\s*(.+)$/);
+
+      if (!km) continue;
+
+      const k = km[1], v = km[2].trim().replace(/^['"]|['"]$/g, '');
+
+      if (k === 'name') currentProxy.name = v;
+
+      else if (k === 'server') currentProxy.server = v;
+
+      else if (k === 'port') currentProxy.port = parseInt(v, 10) || 0;
+
+      else if (k === 'method') currentProxy.cipher = v;
+
+      else if (k === 'password') currentProxy.password = v;
+
+      else if (k === 'user_id') currentProxy.uuid = v;
+
+      else if (k === 'uuid') currentProxy.uuid = v;
+
+      else if (k === 'sni' || k === 'servername') currentProxy.sni = v;
+
+      else if (k === 'network') currentProxy.network = v;
+
+      else if (k === 'flow') currentProxy.flow = v;
+
+      else if (k === 'tls') currentProxy.tls = v === 'true' || v === true;
+
+      else if (k === 'udp_relay' || k === 'udp') currentProxy.udp = v === 'true' || v === true;
+
+      else if (k === 'tfo') currentProxy.tfo = v === 'true' || v === true;
+
+      else if (k === 'skip_tls_verify') currentProxy['skip-cert-verify'] = v === 'true' || v === true;
+
+      else if (k === 'private_key') currentProxy['private-key'] = v;
+
+      else if (k === 'peer_public_key') currentProxy['public-key'] = v;
+
+      else if (k === 'local_ipv4') currentProxy.ip = v;
+
+      else if (k === 'local_ipv6') currentProxy.ipv6 = v;
+
+      else if (k === 'obfs') currentProxy.plugin = 'obfs';
+
+      else if (k === 'obfs_host') { currentProxy.plugin = 'obfs'; currentProxy['plugin-opts'] = { ...(currentProxy['plugin-opts'] || {}), host: v }; }
+
+      else if (k === 'obfs_password') currentProxy['obfs-password'] = v;
+
+      else currentProxy[k] = v;
+
+    }
+
+  }
+
+  if (currentProxy && currentProxy.type && currentProxy.server) proxies.push(currentProxy);
+
+  return proxies;
+
+}
 
 function parseClashYaml(text) {
 
@@ -532,17 +644,104 @@ function addFlag(name) {
 
 
 
-function isSs2022Cipher(cipher) {
 
-  const c = String(cipher || '').trim().toLowerCase();
 
-  return ['2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm', '2022-blake3-chacha20-poly1305'].includes(c);
+
+// ==================== Egern JSON-in-YAML → proper YAML ====================
+
+function egernToProperYaml(text) {
+
+  if (!text || !text.includes('{"')) return text;
+
+  const lines = text.split('\n');
+
+  const out = [];
+
+  for (const line of lines) {
+
+    const m = line.match(/^(\s*)- (\{.*\})$/);
+
+    if (m) {
+
+      try {
+
+        const obj = JSON.parse(m[2]);
+
+        const entries = objToYaml(obj);
+
+        out.push('- ' + entries[0]);
+
+        for (let i = 1; i < entries.length; i++) out.push('  ' + entries[i]);
+
+        continue;
+
+      } catch {}
+
+    }
+
+    out.push(line);
+
+  }
+
+  return out.join('\n');
 
 }
 
+function objToYaml(obj) {
 
+  const lines = [];
 
+  for (const [k, v] of Object.entries(obj)) {
 
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+
+      lines.push(k + ':');
+
+      for (const l of objToYaml(v)) lines.push('  ' + l);
+
+    } else if (Array.isArray(v)) {
+
+      lines.push(k + ':');
+
+      for (const item of v) {
+
+        if (item && typeof item === 'object') {
+
+          const sub = objToYaml(item);
+
+          lines.push('  - ' + sub[0]);
+
+          for (let i = 1; i < sub.length; i++) lines.push('    ' + sub[i]);
+
+        } else {
+
+          lines.push('  - ' + JSON.stringify(item));
+
+        }
+
+      }
+
+    } else if (typeof v === 'string') {
+
+      const needQuote = /[:{}\[\],&*?|>!%#@`]/.test(v) || v === '' || /^\s|\s$/.test(v);
+
+      lines.push(k + ': ' + (needQuote ? JSON.stringify(v) : v));
+
+    } else if (v === null || v === undefined) {
+
+      lines.push(k + ': null');
+
+    } else {
+
+      lines.push(k + ': ' + v);
+
+    }
+
+  }
+
+  return lines;
+
+}
 
 // ==================== 本地订阅收集系统 ====================
 
@@ -3414,7 +3613,7 @@ async function cb_my_links(env, uid, cid, mid, u, d, q) {
 
           const raw = await env.KV.get('share_' + l.id, { type: 'json' });
 
-          if (!raw) icon = '\u26AB';
+          if (!raw || raw.consumed) icon = '\u26AB';
 
         } catch {}
 
@@ -3486,6 +3685,8 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
 
     let kvAlive = false;
 
+    let kvConsumed = false;
+
     let accessedCount = 0;
 
     let accessedLimit = l.maxAccess || 0;
@@ -3498,6 +3699,8 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
 
         kvAlive = true;
 
+        kvConsumed = !!raw.consumed;
+
         accessedCount = Array.isArray(raw.accessedIPs) ? raw.accessedIPs.length : 0;
 
         accessedLimit = raw.maxAccess || l.maxAccess || 0;
@@ -3508,9 +3711,9 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
 
 
 
-    // 确定生死：KV 被删 = 已消耗阅后即焚/超限
+    // 确定生死：KV 被删或 consumed=true = 已消耗
 
-    const isConsumed = !kvAlive && (l.maxAccess > 0 || l.burn);
+    const isConsumed = kvConsumed || (!kvAlive && (l.maxAccess > 0 || l.burn));
 
     const isExpired = l.ttl > 0 && l.expiresAt && Date.now() > l.expiresAt;
 
@@ -4684,6 +4887,40 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
         }
 
+        // egern 后处理：JSON-in-YAML → proper YAML
+
+        if (output && fmt === 'egern') {
+
+          output = egernToProperYaml(output);
+
+        }
+
+        // v2ray/URI 后处理：修复插件名称兼容性
+
+        if (output && (fmt === 'v2ray' || fmt === 'uri')) {
+
+          if (Array.isArray(output)) output = output.join('\n');
+
+          // v2ray 返回 base64，需要解码→替换→重编码
+
+          if (fmt === 'v2ray' && /^[A-Za-z0-9+/=\s\r\n]+$/.test(output.trim())) {
+
+            try {
+
+              const decoded = decodeURIComponent(escape(atob(output.trim())));
+
+              output = btoa(unescape(encodeURIComponent(decoded.replace(/simple-obfs/g, 'obfs-local').replace(/\/\?plugin=/g, '?plugin='))));
+
+            } catch {}
+
+          } else {
+
+            output = output.replace(/simple-obfs/g, 'obfs-local').replace(/\/\?plugin=/g, '?plugin=');
+
+          }
+
+        }
+
       } catch (e) {
 
         return tg('editMessageText', env.BOT_TOKEN, {
@@ -4860,33 +5097,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
       }
 
-
-
-      // SS2022 侧链
-
-      const ss2022Nodes = proxiesForConvert.filter(p => p.type === 'ss' && isSs2022Cipher(p.cipher));
-
-      if (ss2022Nodes.length > 0 && fmt !== 'clashmeta' && fmt !== 'native' && fmt !== 'b64') {
-
-        let ss2022Yaml;
-
-        try { ss2022Yaml = ProxyUtils.produce(ss2022Nodes, 'clashmeta'); } catch {}
-
-        if (!ss2022Yaml) ss2022Yaml = 'proxies:\n' + ss2022Nodes.map(p => '  - {name: "' + p.name + '", type: ss, server: ' + p.server + ', cipher: ' + p.cipher + '}').join('\n');
-
-        const { url: ss2022Url } = await saveToClipAndTrack(String(ss2022Yaml), getEffectiveTtl(u), env, uid, {
-
-          preview: 'SS2022 × ' + ss2022Nodes.length + ' (自定 YAML)', nodeCount: ss2022Nodes.length, source: 'ss2022',
-
-          burn: u?._burn || false,
-
-          landing: u?._landing || false,
-
-        }, getEffectiveMaxAccess(u));
-
-        extraUrls.push({ text: '⚡ SS2022 (自定 YAML)', url: ss2022Url });
-
-      }
 
 
 
@@ -5496,9 +5706,15 @@ export default {
 
         if (burn) {
 
-          // 阅后即焚：清空 text，标记 consumed
+          // 阅后即焚：清空 text，标记 consumed，记录访问 IP
 
-          ctx.waitUntil(env.KV.put('share_' + id, JSON.stringify({ ...raw, consumed: true, text: '' }), ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {}));
+          const burnAccessed = Array.isArray(raw.accessedIPs) ? raw.accessedIPs : [];
+
+          const burnNew = !burnAccessed.includes(clientIP);
+
+          const burnData = { ...raw, consumed: true, text: '', accessedIPs: burnNew ? [...burnAccessed, clientIP] : burnAccessed };
+
+          ctx.waitUntil(env.KV.put('share_' + id, JSON.stringify(burnData), ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {}));
 
         }
 
@@ -6005,3 +6221,5 @@ export default {
 };
 
 // Simple Clash YAML proxies extractor
+
+--43d9080ff6c636ca15fd9df1536f22ebee6ca92a11d9ab3619c3154d3a47--
