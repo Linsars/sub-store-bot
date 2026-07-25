@@ -1,4 +1,3 @@
-# Changelog
 ## v2.32.1 (2026-07-25)
 - parseClashYaml 支持 0 缩进节点（动态 indent 计算）
 - 修复 proxy-groups 条目误解析

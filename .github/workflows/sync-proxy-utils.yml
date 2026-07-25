@@ -60,14 +60,10 @@ jobs:
           # 更新 worker.mjs 版本号
           sed -i "s/BOT_VERSION = '$OLD_VER'/BOT_VERSION = '$NEW_VER'/" worker.mjs
 
-          # 追加 CHANGELOG
+          # 追加 CHANGELOG（前插到文件顶部）
           DATE=$(date +%Y-%m-%d)
-          ENTRY="## v${NEW_VER} (${DATE})\n- 同步 Sub-Store 引擎更新\n"
-          # 在第一个 ## 之前插入
-          sed -i "/^## /i\\
-          ## v${NEW_VER} (${DATE})\\
-          - 同步 Sub-Store 引擎更新\\
-          " CHANGELOG.md
+          { printf "## v${NEW_VER} (%s)\n- 同步 Sub-Store 引擎更新\n\n" "$DATE"; cat CHANGELOG.md; } > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
 
       - name: Commit and annotate
         if: steps.changed.outputs.changed == 'true'
