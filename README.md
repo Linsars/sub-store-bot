@@ -2,11 +2,11 @@
 
 Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 
-![截图1](tools/screenshot1.png)
-![截图2](tools/screenshot2.png)
-![截图3](tools/screenshot3.png)
+https://github.com/user-attachments/assets/21b7e05f-5ab4-4198-a6db-215e21739e16
 
-> 演示视频见 [tools/demo.mp4](tools/demo.mp4)
+<a href="tools/screenshot1.png"><img src="tools/screenshot1.png" width="200"></a>
+<a href="tools/screenshot2.png"><img src="tools/screenshot2.png" width="200"></a>
+<a href="tools/screenshot3.png"><img src="tools/screenshot3.png" width="200"></a>
 
 ---
 
