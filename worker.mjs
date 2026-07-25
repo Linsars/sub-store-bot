@@ -28,7 +28,7 @@
 
 import { ProxyUtils } from './proxy-utils.esm.js';
 
-const BOT_VERSION = '2.32.0';
+const BOT_VERSION = '2.32.1';
 
 
 
@@ -358,17 +358,21 @@ function parseClashYaml(text) {
 
   let remaining = proxyIdx === 0 ? text.slice(9) : text.slice(proxyIdx + 10);
 
-  // Find all "- name:" entries (2 or 4 space indent)
+  // Find all "- name:" entries (0-4 space indent)
 
-  const nameRe = /^\s{2,4}- name: (.+)$/gm;
+  const nameRe = /^(\s{0,4})- name: (.+)$/gm;
 
   let m;
 
   const entries = [];
 
+  const pgIdx = remaining.indexOf('\nproxy-groups:');
+
   while ((m = nameRe.exec(remaining)) !== null) {
 
-    entries.push({ start: m.index, name: m[1].trim().replace(/^['"]|['"]$/g, '') });
+    if (pgIdx !== -1 && m.index > pgIdx) break;
+
+    entries.push({ start: m.index, indent: m[1].length, name: m[2].trim().replace(/^['"]|['"]$/g, '') });
 
   }
 
@@ -382,9 +386,17 @@ function parseClashYaml(text) {
 
     const proxy = { name: entries[i].name, type: '', server: '', port: 0 };
 
-    const fieldRe = /^\s{4,8}([\w][\w-]*?):\s*(.+)$/gm;
+    // Dynamic indent: field indent = entry indent + 2 (e.g. 0→2, 2→4, 4→6)
+
+    const fLo = entries[i].indent + 2, fHi = fLo + 4;
+
+    const fieldRe = new RegExp(`^\\s{${fLo},${fHi}}([\\w][\\w-]*?):([ \\t]*[^\\n]*)$`, 'gm');
 
     let fm;
+
+    // Nested object keys: plugin-opts, ws-opts, h2-opts, http-opts, grpc-opts
+    const nestedKeys = new Set(['plugin-opts', 'ws-opts', 'h2-opts', 'http-opts', 'grpc-opts']);
+    const nestedObjs = {};
 
     while ((fm = fieldRe.exec(block)) !== null) {
 
@@ -392,7 +404,22 @@ function parseClashYaml(text) {
 
       let v = fm[2].trim().replace(/^['"]|['"]$/g, '');
 
-      if (k === 'type') proxy.type = v.toLowerCase();
+      if (nestedKeys.has(k) && !v) {
+        // Empty value = nested object: collect sub-lines with deeper indent
+        const obj = {};
+        const afterNl = block.indexOf('\n', fm.index);
+        const subLines = block.slice(afterNl + 1).split('\n');
+        for (const line of subLines) {
+          const trimmed = line.trimStart();
+          if (!trimmed) continue;
+          const lineIndent = line.length - trimmed.length;
+          if (lineIndent <= fLo) break;
+          const kv = trimmed.match(/^([\w][\w-]*?):\s*(.+)/);
+          if (kv) obj[kv[1]] = kv[2].trim().replace(/^['"]|['"]$/g, '');
+        }
+        nestedObjs[k] = obj;
+      }
+      else if (k === 'type') proxy.type = v.toLowerCase();
 
       else if (k === 'server') proxy.server = v;
 
@@ -420,6 +447,8 @@ function parseClashYaml(text) {
 
       else if (k === 'client-fingerprint') proxy['client-fingerprint'] = v;
 
+      else if (k === 'plugin') proxy.plugin = v;
+
       else if (k === 'tfo') proxy.tfo = v === 'true' || v === true;
 
       else if (k === 'reality') proxy.reality = v === 'true' || v === true;
@@ -431,6 +460,9 @@ function parseClashYaml(text) {
       else proxy[k] = v;
 
     }
+
+    // Merge nested objects (plugin-opts, ws-opts, etc.)
+    Object.assign(proxy, nestedObjs);
 
     if (proxy.type && proxy.server && proxy.port) {
 
