@@ -1,9 +1,8 @@
-## v2.32.1 (2026-07-25)
-- 同步 CF worker 备份
-
 # Changelog
 ## v2.32.1 (2026-07-25)
-- 更新日志测试
+- parseClashYaml 支持 0 缩进节点（动态 indent 计算）
+- 修复 proxy-groups 条目误解析
+- 同步 CF worker 备份
 
 ## v2.32.0 (2026-07-25)
 - YAML 模板系统：从仓库 `landing/` 动态加载模板
