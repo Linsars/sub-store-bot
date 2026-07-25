@@ -28,6 +28,8 @@
 
 import { ProxyUtils } from './proxy-utils.esm.js';
 
+const BOT_VERSION = '2.32.0';
+
 
 
 // ==================== 工具函数 ====================
@@ -1046,7 +1048,7 @@ function multiResultKb(mainUrl, extraUrls) {
 
 function mainPageText() {
 
-  return '<b>\u{1F916} Sub-Store Bot</b>\n\n' +
+  return '<b>\u{1F916} Sub-Store Bot</b>  <code>v' + BOT_VERSION + '</code>\n\n' +
 
     '\u{1F310} <b>\u8FDC\u7A0B\u8BA2\u9605</b> \u2014 \u53D1\u94FE\u63A5\uFF0C\u81EA\u52A8\u62C9\u53D6\u8F6C\u6362\n' +
 
@@ -2841,6 +2843,7 @@ async function onCb(q, env) {
   if (d === 'ua_add') return cb_ua_add(env, uid, cid, mid, u, d, q);
 
   if (d.startsWith('my_links_')) return cb_my_links(env, uid, cid, mid, u, d, q);
+    if (d === 'changelog') return cb_changelog(env, uid, cid, mid, u, d, q);
 
   if (d.startsWith('link_')) return cb_link(env, uid, cid, mid, u, d, q);
 
@@ -3298,6 +3301,41 @@ async function cb_ua_add(env, uid, cid, mid, u, d, q) {
 
 
 
+async function cb_changelog(env, uid, cid, mid, u, d, q) {
+  const REPO_URL = 'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/CHANGELOG.md';
+  const REPO_PAGE = 'https://github.com/Linsars/sub-store-bot';
+  let changelog = '';
+  try {
+    const resp = await fetch(REPO_URL);
+    if (resp.ok) changelog = await resp.text();
+  } catch {}
+  if (!changelog) {
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid, message_id: mid,
+      text: '📋 <b>更新日志</b>\n\n暂无更新日志',
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [[{ text: '⬅️ 返回', callback_data: 'my_links_0' }]] },
+    });
+  }
+  // 提取最新版本号
+  const versionMatch = changelog.match(/^## v([\d.]+)/m);
+  const latestVersion = versionMatch ? versionMatch[1] : '';
+  const isUpdated = latestVersion === BOT_VERSION;
+  let header = '';
+  const kb = [[{ text: '⬅️ 返回', callback_data: 'my_links_0' }]];
+  if (isUpdated) {
+    header = '✅ 恭喜已是最新版本\n\n';
+  } else {
+    header = '⚠️ 版本有更新，请移步仓库手动更新\n\n';
+    kb.unshift([{ text: '📦 前往仓库', url: REPO_PAGE }]);
+  }
+  const text = header + '📋 <b>更新日志</b>\n\n' + changelog.substring(0, 3000);
+  return tg('editMessageText', env.BOT_TOKEN, {
+    chat_id: cid, message_id: mid, text, parse_mode: 'HTML',
+    reply_markup: { inline_keyboard: kb },
+  });
+}
+
 async function cb_my_links(env, uid, cid, mid, u, d, q) {
 
   const page = parseInt(d.split('_')[2]) || 0;
@@ -3364,7 +3402,7 @@ async function cb_my_links(env, uid, cid, mid, u, d, q) {
 
     if (navRow.length) rows.push(navRow);
 
-    rows.push([{ text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }]);
+    rows.push([{ text: '\u{1F4DD} \u66F4\u65B0\u65E5\u5FD7', callback_data: 'changelog' }, { text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }]);
 
     return tg('editMessageText', env.BOT_TOKEN, {
 
@@ -5140,7 +5178,7 @@ async function cb_tmpl_sync(env, uid, cid, mid, u, d, q) {
 
   }
 
-  await env.KV.put('tmpl_repo_cache', JSON.stringify(repoTmpls), { expirationTtl: 3600 });
+  await env.KV.put('tmpl_repo_cache', JSON.stringify(repoTmpls));
 
   await tg('answerCallbackQuery', env.BOT_TOKEN, { callback_query_id: mid, text: '✅ 已同步 ' + repoTmpls.length + ' 个模板' });
 
