@@ -45,15 +45,39 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Bump version and update CHANGELOG
+        if: steps.changed.outputs.changed == 'true'
+        run: |
+          # 提取当前版本号
+          OLD_VER=$(grep -oP "BOT_VERSION = '\K[^']+" worker.mjs)
+          MAJOR=$(echo $OLD_VER | cut -d. -f1)
+          MINOR=$(echo $OLD_VER | cut -d. -f2)
+          PATCH=$(echo $OLD_VER | cut -d. -f3)
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VER="${MAJOR}.${MINOR}.${NEW_PATCH}"
+          echo "Version: $OLD_VER → $NEW_VER"
+
+          # 更新 worker.mjs 版本号
+          sed -i "s/BOT_VERSION = '$OLD_VER'/BOT_VERSION = '$NEW_VER'/" worker.mjs
+
+          # 追加 CHANGELOG
+          DATE=$(date +%Y-%m-%d)
+          ENTRY="## v${NEW_VER} (${DATE})\n- 同步 Sub-Store 引擎更新\n"
+          # 在第一个 ## 之前插入
+          sed -i "/^## /i\\
+          ## v${NEW_VER} (${DATE})\\
+          - 同步 Sub-Store 引擎更新\\
+          " CHANGELOG.md
+
       - name: Commit and annotate
         if: steps.changed.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add proxy-utils.esm.js tools/proxy-utils-src/src/
+          git add proxy-utils.esm.js worker.mjs CHANGELOG.md tools/proxy-utils-src/src/
           git commit -m "chore: sync Sub-Store engine [skip ci]"
           git push
-          echo "::notice title=Engine Update::proxy-utils.esm.js 已更新并推送"
+          echo "::notice title=Engine Update::proxy-utils.esm.js 已更新，版本已递增"
 
       - name: No change notice
         if: steps.changed.outputs.changed == 'false'
