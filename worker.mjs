@@ -1,4 +1,4 @@
-*
+/*
 
  * Sub-Store Bot — Telegram 剪贴板 + 订阅转换
 
@@ -24,17 +24,11 @@
 
  */
 
-
-
 import { ProxyUtils } from './proxy-utils.esm.js';
 
 const BOT_VERSION = '2.33.0';
 
-
-
 // ==================== 工具函数 ====================
-
-
 
 function genId(len = 7) {
 
@@ -48,8 +42,6 @@ function genId(len = 7) {
 
 }
 
-
-
 // 上标数字（去同名用：节点² 节点³）
 
 function superscriptNum(n) {
@@ -59,8 +51,6 @@ function superscriptNum(n) {
   return String(n).split('').map(d => sup[parseInt(d)]).join('');
 
 }
-
-
 
 async function tg(method, token, body) {
 
@@ -92,15 +82,11 @@ async function tg(method, token, body) {
 
 }
 
-
-
 function escapeHTML(s) {
 
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 }
-
-
 
 // TTL 秒数 → 中文标签
 
@@ -110,11 +96,7 @@ function formatTtlLabel(s) {
 
 }
 
-
-
 // ==================== 日志与错误处理 ====================
-
-
 
 function log(level, uid, msg, data = null) {
 
@@ -136,8 +118,6 @@ function log(level, uid, msg, data = null) {
 
 }
 
-
-
 async function safeExecute(fn, env, uid, cid, mid = null, context = '') {
 
   try {
@@ -153,8 +133,6 @@ async function safeExecute(fn, env, uid, cid, mid = null, context = '') {
       context
 
     });
-
-
 
     let hint = '';
 
@@ -178,13 +156,9 @@ async function safeExecute(fn, env, uid, cid, mid = null, context = '') {
 
     }
 
-
-
     const userErrorMsg = '\u274C \u5904\u7406\u5931\u8D25' + (context ? ' [' + context + ']' : '') +
 
       '\n\n\u539F\u56E0: ' + (err.message || '\u672A\u77E5\u9519\u8BEF') + hint;
-
-
 
     if (mid) {
 
@@ -200,15 +174,7 @@ async function safeExecute(fn, env, uid, cid, mid = null, context = '') {
 
 }
 
-
-
-
-
-
-
 // ==================== Surge 格式行解析 ====================
-
-
 
 function parseSurgeLines(text) {
 
@@ -310,15 +276,11 @@ function parseSurgeLines(text) {
 
 }
 
-
-
 function parseProxies(text) {
 
   return parseProxiesWithSurge(text, false);
 
 }
-
-
 
 function parseProxiesWithSurge(text, skipSurge) {
 
@@ -345,8 +307,6 @@ function parseProxiesWithSurge(text, skipSurge) {
   return [];
 
 }
-
-
 
 // ==================== sing-box/Egern YAML 解析器 ====================
 
@@ -592,11 +552,7 @@ function parseClashYaml(text) {
 
 }
 
-
-
 // ==================== 国家旗帜 ====================
-
-
 
 function addFlag(name) {
 
@@ -641,11 +597,6 @@ function addFlag(name) {
   return name;
 
 }
-
-
-
-
-
 
 // ==================== Egern JSON-in-YAML → proper YAML ====================
 
@@ -745,8 +696,6 @@ function objToYaml(obj) {
 
 // ==================== 本地订阅收集系统 ====================
 
-
-
 function collectionText(collection) {
 
   const items = collection?.items || [];
@@ -805,8 +754,6 @@ function collectionText(collection) {
 
 }
 
-
-
 function collectionKb(hasItems) {
 
   const buttons = [];
@@ -822,8 +769,6 @@ function collectionKb(hasItems) {
   return { inline_keyboard: [buttons] };
 
 }
-
-
 
 // Atomic IP counting + access limit (PR #1, burn handled at route level)
 
@@ -881,11 +826,7 @@ async function atomicTrackIP(env, id, clientIP, maxIPs, ttl) {
 
 }
 
-
-
 // ==================== 按钮布局 ====================
-
-
 
 function mainKb() {
 
@@ -923,8 +864,6 @@ function mainKb() {
 
 }
 
-
-
 const FORMAT_OPTIONS = [
 
   { id: 'clashmeta', label: 'Clash Meta' },
@@ -956,8 +895,6 @@ const FORMAT_OPTIONS = [
   { id: 'native', label: '自定 YAML' },
 
 ];
-
-
 
 function fmtKb(allowed, convTtl, ttlDefault, u) {
 
@@ -1002,8 +939,6 @@ function fmtKb(allowed, convTtl, ttlDefault, u) {
   return { inline_keyboard: rows };
 
 }
-
-
 
 function ttlKb(current, prefix, backCb) {
 
@@ -1081,8 +1016,6 @@ function ttlKb(current, prefix, backCb) {
 
 }
 
-
-
 function accKb(current, prefix, backCb) {
 
   const opts = [
@@ -1149,15 +1082,11 @@ function accKb(current, prefix, backCb) {
 
 }
 
-
-
 function backKb() {
 
   return { inline_keyboard: [[{ text: '\u2190 返回', callback_data: 'menu' }]] };
 
 }
-
-
 
 // ===== 通用消息工具 =====
 
@@ -1205,8 +1134,6 @@ async function replyMsg(env, uid, cid, text, kb) {
 
 }
 
-
-
 function resultKb(url) {
 
   return {
@@ -1232,8 +1159,6 @@ function resultKb(url) {
   };
 
 }
-
-
 
 function multiResultKb(mainUrl, extraUrls) {
 
@@ -1271,11 +1196,7 @@ function multiResultKb(mainUrl, extraUrls) {
 
 }
 
-
-
 // ==================== 主页文字 ====================
-
-
 
 function mainPageText() {
 
@@ -1293,15 +1214,9 @@ function mainPageText() {
 
 }
 
-
-
 // ==================== 用户状态管理 ====================
 
-
-
 const stateMap = new Map();
-
-
 
 function getState(uid) {
 
@@ -1323,11 +1238,7 @@ function getState(uid) {
 
 }
 
-
-
 // ==================== 用户配置持久化（KV 存储） ====================
-
-
 
 async function loadUserConfig(uid, env) {
 
@@ -1340,8 +1251,6 @@ async function loadUserConfig(uid, env) {
   } catch { return {}; }
 
 }
-
-
 
 async function saveUserConfig(uid, env, state) {
 
@@ -1357,15 +1266,9 @@ async function saveUserConfig(uid, env, state) {
 
 }
 
-
-
 // ==================== TG 请求限流 ====================
 
-
-
 const rateLimitMap = new Map();
-
-
 
 function applyRateLimit(uid, allowedUsers) {
 
@@ -1427,19 +1330,13 @@ function applyRateLimit(uid, allowedUsers) {
 
 }
 
-
-
 // ==================== 订阅拉取（多 UA 轮询，支持用户自定义） ====================
-
-
 
 const FETCH_UAS = [
 
   'Karing', 'FLClash', 'clash-verge', 'sing-box', 'clashmeta', 'shadowrocket', 'surge',
 
 ];
-
-
 
 // 获取用户 UA 配置
 
@@ -1455,15 +1352,11 @@ async function getUaConfig(uid, env) {
 
 }
 
-
-
 async function saveUaConfig(uid, env, cfg) {
 
   await env.KV.put('ua:' + uid, JSON.stringify(cfg));
 
 }
-
-
 
 function showUaSettings(cid, mid, uid, env) {
 
@@ -1549,8 +1442,6 @@ function showUaSettings(cid, mid, uid, env) {
 
 }
 
-
-
 // 构建有效 UA 列表（自定义 UA 与默认 UA 不区分大小写去重）
 
 async function getUaList(uid, env) {
@@ -1592,8 +1483,6 @@ async function getUaList(uid, env) {
   return list;
 
 }
-
-
 
 async function fetchSub(url, uid, env) {
 
@@ -1727,11 +1616,7 @@ async function fetchSub(url, uid, env) {
 
 }
 
-
-
 // ==================== Gost Tunnel 检测 ====================
-
-
 
 function isGostSocksContent(text) {
 
@@ -1756,8 +1641,6 @@ function isGostSocksContent(text) {
   return socksCount > 0 && gostCount > 0 ? { total: socksCount, gostCount } : null;
 
 }
-
-
 
 // 从文本中提取 Gost 行，返回 { gostLines, otherLines }
 
@@ -1789,11 +1672,7 @@ function splitGostLines(text) {
 
 }
 
-
-
 // ==================== 节点去重（按特征而非节点名） ====================
-
-
 
 function deduplicateProxies(proxies) {
 
@@ -1849,15 +1728,7 @@ function deduplicateProxies(proxies) {
 
 }
 
-
-
-
-
-
-
 // ==================== 编辑提示消息或发新消息 ====================
-
-
 
 async function replyOrEdit(u, cid, env, opts) {
 
@@ -1917,11 +1788,7 @@ async function replyOrEdit(u, cid, env, opts) {
 
 }
 
-
-
 // ==================== 用户短链索引 ====================
-
-
 
 async function getUserLinks(uid, env) {
 
@@ -1935,8 +1802,6 @@ async function getUserLinks(uid, env) {
 
 }
 
-
-
 async function addUserLink(uid, env, entry) {
 
   const links = await getUserLinks(uid, env);
@@ -1948,8 +1813,6 @@ async function addUserLink(uid, env, entry) {
   await env.KV.put('ulinks:' + uid, JSON.stringify(links));
 
 }
-
-
 
 async function removeUserLink(uid, env, id) {
 
@@ -1971,8 +1834,6 @@ async function removeUserLink(uid, env, id) {
 
 }
 
-
-
 function linkStatusIcon(entry) {
 
   if (entry.ttl === 0) return '\u{1F535}';  // 🔵 永久
@@ -1990,8 +1851,6 @@ function linkStatusIcon(entry) {
   return '\u{1F7E0} ' + Math.round(remain / 60) + 'h'; // 🟠
 
 }
-
-
 
 function formatRemaining(expiresAt) {
 
@@ -2021,15 +1880,11 @@ function formatRemaining(expiresAt) {
 
 }
 
-
-
 function getEffectiveTtl(u) {
 
   return u._convTtl !== undefined && u._convTtl !== null ? u._convTtl : (u.ttl !== undefined ? u.ttl : 0);
 
 }
-
-
 
 function getEffectiveMaxAccess(u) {
 
@@ -2039,11 +1894,7 @@ function getEffectiveMaxAccess(u) {
 
 }
 
-
-
 // ==================== 保存到短链 ====================
-
-
 
 async function saveToClip(text, ttl, env, maxAccess, extra = {}) {
 
@@ -2067,8 +1918,6 @@ async function saveToClip(text, ttl, env, maxAccess, extra = {}) {
 
     _createdAt: Date.now(),
 
-
-
   });
 
   const kvOpts = {};
@@ -2080,8 +1929,6 @@ async function saveToClip(text, ttl, env, maxAccess, extra = {}) {
   return id;
 
 }
-
-
 
 // 保存短链并记录到用户索引
 
@@ -2113,11 +1960,7 @@ async function saveToClipAndTrack(text, ttl, env, uid, extra, maxAccess) {
 
 }
 
-
-
 // ==================== 用户白名单 ====================
-
-
 
 function isAllowed(uid, env) {
 
@@ -2141,11 +1984,7 @@ function isAllowed(uid, env) {
 
 }
 
-
-
 // ==================== 远程订阅拉取（独立函数，供 onMsg / cb_collection_process 调用） ====================
-
-
 
 async function processRemoteUrls(urls, cid, uid, u, env) {
 
@@ -2154,8 +1993,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
   const totalInputUrls = urls.length;
 
   const uniqueUrls = [...new Set(urls)];
-
-
 
   if (uniqueUrls.length === 0) {
 
@@ -2166,8 +2003,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
     });
 
   }
-
-
 
   // --- 拉取 ---
 
@@ -2180,8 +2015,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
   const errors = [];
 
   let dupSubCount = 0;
-
-
 
   if (uniqueUrls.length === 1) {
 
@@ -2238,8 +2071,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
     // 多 URL
 
     await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 ' + uniqueUrls.length + ' \u4E2A\u8BA2\u9605...' });
-
-
 
     if (uniqueUrls.length >= 4) {
 
@@ -2503,13 +2334,9 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
   }
 
-
-
   // --- 去重 + 统计 ---
 
   allProxies = deduplicateProxies(allProxies);
-
-
 
   if (allProxies.length === 0) {
 
@@ -2521,8 +2348,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
   }
 
-
-
   let report = '\u2705 \u5408\u5E76 ' + allProxies.length + ' \u4E2A\u8282\u70B9';
 
   report += ' \u6765\u81EA ' + rawTexts.length + '/' + totalInputUrls + ' \u4E2A\u6E90';
@@ -2530,8 +2355,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
   if (errors.length > 0) report += '\n\n\u26A0\uFE0F \u5931\u8D25:\n' + errors.join('\n');
 
   await replyOrEdit(u, cid, env, { text: report });
-
-
 
   // 二次去重 + 统计
 
@@ -2563,8 +2386,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
   u._lastFetchUa = usedUas.length > 0 ? usedUas.join('\n') : null;
 
-
-
   // --- 设置状态 + 显示格式选择 ---
 
   const mergedStd = allProxies;
@@ -2578,8 +2399,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
   u._lastProxiesRaw = allProxies;
 
   u._fmtMsg = null;
-
-
 
   // 统计类型
 
@@ -2595,8 +2414,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
   if (u._gostInput && u._gostCount) typeStr += '\n\u{1F504} Gost \u00D7 ' + u._gostCount + ' \u2014 \u5EFA\u8BAE\u9009 Shadowrocket';
 
-
-
   const statsLine = u._lastStats
 
     ? '\n\u{1F4CA} <b>' + u._lastStats.actualNodes + '</b> \u5B9E\u9645 (\u603B: ' + u._lastStats.totalNodes +
@@ -2609,11 +2426,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
     : '';
 
-
-
   const uaInfo = u._lastFetchUa ? '\n\u{1F916} ' + escapeHTML(u._lastFetchUa) : '';
-
-
 
   const fmtText =
 
@@ -2626,8 +2439,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
     '\n\u{1F517} ' + rawTexts.length + '/' + totalInputUrls + ' \u4E2A\u8BA2\u9605\u6E90' + uaInfo + '\n' +
 
     '\u8BF7\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:';
-
-
 
   const sent = await replyOrEdit(u, cid, env, {
 
@@ -2645,11 +2456,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
 }
 
-
-
 // ==================== 消息处理 ====================
-
-
 
 async function onMsg(msg, env) {
 
@@ -2660,8 +2467,6 @@ async function onMsg(msg, env) {
   if (!isAllowed(uid, env)) return;
 
   const u = getState(uid);
-
-
 
   // /start
 
@@ -2680,8 +2485,6 @@ async function onMsg(msg, env) {
     });
 
   }
-
-
 
   // UA 添加模式
 
@@ -2728,8 +2531,6 @@ async function onMsg(msg, env) {
     });
 
   }
-
-
 
   // YAML 模板编辑模式
 
@@ -2803,8 +2604,6 @@ async function onMsg(msg, env) {
 
   }
 
-
-
   // 备注模式 — 只改 preview（列表名字），不碰短链内容
 
   if (u.state && u.state.startsWith('RENAME_')) {
@@ -2839,13 +2638,9 @@ async function onMsg(msg, env) {
 
   }
 
-
-
   // 获取输入内容
 
   let content = '';
-
-
 
   if (msg.text) {
 
@@ -2899,11 +2694,7 @@ async function onMsg(msg, env) {
 
   }
 
-
-
   if (!content) return;
-
-
 
   // 收集模式（本地订阅/远程订阅）
 
@@ -2959,15 +2750,11 @@ async function onMsg(msg, env) {
 
   }
 
-
-
   // ===== 非收集模式 =====
 
   return await safeExecute(async () => {
 
     const ttl = u.ttl !== undefined ? u.ttl : 0;
-
-
 
     // 所有文本 → 直接保存为文本短链，不解析
 
@@ -2995,8 +2782,6 @@ async function onMsg(msg, env) {
 
     u._lastSubInput = content;
 
-
-
     const resultText =
 
       '\u{1F4E6} <b>\u68C0\u6D4B\u5230\u6587\u672C\u8F93\u5165</b>\n\n' +
@@ -3009,25 +2794,15 @@ async function onMsg(msg, env) {
 
       '\u{1F4A1} \u5982\u9700\u89E3\u6790\u8BA2\u9605\uFF0C\u8BF7\u4F7F\u7528\u4E3B\u9875\u7684\u300C\u8BA2\u9605\u300D\u6309\u94AE\u5BFC\u5165\u8BA2\u9605\u94FE\u63A5';
 
-
-
     // 编辑主页消息显示结果，编辑失败则发送新消息
 
     return replyMsg(env, uid, cid, resultText);
 
   }, env, uid, cid, null, '文本保存');
 
-
-
 }
 
-
-
 // ==================== 回调处理 ====================
-
-
-
-
 
 async function onCb(q, env) {
 
@@ -3043,15 +2818,11 @@ async function onCb(q, env) {
 
   const d = q.data;
 
-
-
   await tg('answerCallbackQuery', env.BOT_TOKEN, {
 
     callback_query_id: q.id,
 
   });
-
-
 
   // === dispatch ===
 
@@ -3156,13 +2927,7 @@ async function onCb(q, env) {
 
 }
 
-
-
-
-
 // ==================== onCb 路由处理函数 ====================
-
-
 
 async function cb_menu(env, uid, cid, mid, u, d, q) {
 
@@ -3192,11 +2957,7 @@ async function cb_menu(env, uid, cid, mid, u, d, q) {
 
     });
 
-
-
     }, env, uid, cid, mid, '格式转换');}
-
-
 
 async function cb_input_url(env, uid, cid, mid, u, d, q) {
 
@@ -3218,8 +2979,6 @@ async function cb_input_url(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_input_file(env, uid, cid, mid, u, d, q) {
 
   u._collectMode = 'file';
@@ -3239,8 +2998,6 @@ async function cb_input_file(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_collection_process(env, uid, cid, mid, u, d, q) {
 
@@ -3432,19 +3189,13 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
 
     });
 
-
-
   }, env, uid, cid, mid, '订阅处理');}
-
-
 
 async function cb_ua_menu(env, uid, cid, mid, u, d, q) {
 
   return showUaSettings(cid, mid, uid, env);
 
 }
-
-
 
 async function cb_ua_toggle(env, uid, cid, mid, u, d, q) {
 
@@ -3474,8 +3225,6 @@ async function cb_ua_toggle(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_ua_del(env, uid, cid, mid, u, d, q) {
 
   const ci = parseInt(d.split(':')[1]);
@@ -3494,8 +3243,6 @@ async function cb_ua_del(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_ua_reset(env, uid, cid, mid, u, d, q) {
 
   await saveUaConfig(uid, env, { custom: [], disabled: [] });
@@ -3503,8 +3250,6 @@ async function cb_ua_reset(env, uid, cid, mid, u, d, q) {
     return showUaSettings(cid, mid, uid, env);
 
 }
-
-
 
 async function cb_ua_add(env, uid, cid, mid, u, d, q) {
 
@@ -3529,8 +3274,6 @@ async function cb_ua_add(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_changelog(env, uid, cid, mid, u, d, q) {
   const REPO_URL = 'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/CHANGELOG.md';
@@ -3651,8 +3394,6 @@ async function cb_my_links(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_link(env, uid, cid, mid, u, d, q) {
 
   const linkId = d.replace('link_', '');
@@ -3678,8 +3419,6 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
     }
 
     const clipUrl = ((env.CLIP_URL || '').replace(/\/+$/, '')) + '/share/' + l.id;
-
-
 
     // 读 KV 判断链接实际状态
 
@@ -3709,8 +3448,6 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
 
     } catch {}
 
-
-
     // 确定生死：KV 被删或 consumed=true = 已消耗
 
     const isConsumed = kvConsumed || (!kvAlive && (l.maxAccess > 0 || l.burn));
@@ -3718,8 +3455,6 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
     const isExpired = l.ttl > 0 && l.expiresAt && Date.now() > l.expiresAt;
 
     const isDead = isExpired || isConsumed || (!kvAlive && l.ttl > 0);
-
-
 
     let statusIcon, statusText;
 
@@ -3749,8 +3484,6 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
 
     }
 
-
-
     let text = '\u{1F4CB} <b>\u77ED\u94FE\u8BE6\u60C5</b>\n\n';
 
     text += statusIcon + ' <b>' + escapeHTML(l.preview) + '</b>\n';
@@ -3769,23 +3502,17 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
 
     text += '\n\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
 
-    
-
     const ttlRow = isDead
 
       ? [{ text: '\u26AB \u5DF2\u6D88\u8017/\u8FC7\u671F', callback_data: 'noop' }]
 
       : [{ text: '\u23F1 \u4FEE\u6539\u6642\u6548', callback_data: 'mod_ttl_' + l.id }];
 
-
-
     const accRow = isDead
 
       ? []
 
       : [{ text: '\u{1F4CA} \u4FEE\u6539\u6B21\u6570', callback_data: 'mod_acc_' + l.id }];
-
-
 
     const rows = [
 
@@ -3831,8 +3558,6 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_del_confirm(env, uid, cid, mid, u, d, q) {
 
   const linkId = d.replace('del_confirm_', '');
@@ -3862,8 +3587,6 @@ async function cb_del_confirm(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_do_del(env, uid, cid, mid, u, d, q) {
 
@@ -3919,8 +3642,6 @@ async function cb_do_del(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_mod_ttl(env, uid, cid, mid, u, d, q) {
 
   const linkId = d.replace('mod_ttl_', '');
@@ -3946,8 +3667,6 @@ async function cb_mod_ttl(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_chg_ttl(env, uid, cid, mid, u, d, q) {
 
@@ -4035,10 +3754,6 @@ async function cb_chg_ttl(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
-
-
 async function cb_mod_acc(env, uid, cid, mid, u, d, q) {
 
   const linkId = d.replace('mod_acc_', '');
@@ -4076,8 +3791,6 @@ async function cb_mod_acc(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_chg_acc(env, uid, cid, mid, u, d, q) {
 
@@ -4165,8 +3878,6 @@ async function cb_chg_acc(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_limit_menu(env, uid, cid, mid, u, d, q) {
 
   const defTtl = u.ttl !== undefined ? u.ttl : 0;
@@ -4203,8 +3914,6 @@ async function cb_limit_menu(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_ttl_menu(env, uid, cid, mid, u, d, q) {
 
   const curTtl = u.ttl || 0;
@@ -4226,8 +3935,6 @@ async function cb_ttl_menu(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_ttl_set(env, uid, cid, mid, u, d, q) {
 
@@ -4257,8 +3964,6 @@ async function cb_ttl_set(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_acc_menu(env, uid, cid, mid, u, d, q) {
 
   const curAcc = u._accessLimit !== undefined ? u._accessLimit : 0;
@@ -4276,8 +3981,6 @@ async function cb_acc_menu(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_acc_set(env, uid, cid, mid, u, d, q) {
 
@@ -4301,8 +4004,6 @@ async function cb_acc_set(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_conv_toggle_burn(env, uid, cid, mid, u, d, q) {
 
   u._burn = !u._burn;
@@ -4317,8 +4018,6 @@ async function cb_conv_toggle_burn(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_conv_toggle_landing(env, uid, cid, mid, u, d, q) {
 
   u._landing = !u._landing;
@@ -4332,8 +4031,6 @@ async function cb_conv_toggle_landing(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_conv_back(env, uid, cid, mid, u, d, q) {
 
@@ -4352,8 +4049,6 @@ async function cb_conv_back(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_conv_limit_menu(env, uid, cid, mid, u, d, q) {
 
@@ -4393,8 +4088,6 @@ async function cb_conv_limit_menu(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_conv_ttl_menu(env, uid, cid, mid, u, d, q) {
 
   return tg('editMessageText', env.BOT_TOKEN, {
@@ -4412,8 +4105,6 @@ async function cb_conv_ttl_menu(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_conv_ttl_set(env, uid, cid, mid, u, d, q) {
 
@@ -4437,8 +4128,6 @@ async function cb_conv_ttl_set(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_conv_acc_menu(env, uid, cid, mid, u, d, q) {
 
   const current = u._convAccessLimit != null ? u._convAccessLimit : (u._accessLimit != null ? u._accessLimit : 0);
@@ -4458,8 +4147,6 @@ async function cb_conv_acc_menu(env, uid, cid, mid, u, d, q) {
     });
 
 }
-
-
 
 async function cb_conv_acc_set(env, uid, cid, mid, u, d, q) {
 
@@ -4483,15 +4170,11 @@ async function cb_conv_acc_set(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
   const fmt = d.split(':')[1];
 
     const fmtLabel = FORMAT_OPTIONS.find((f) => f.id === fmt)?.label || fmt;
-
-
 
     // 纯 Gost（无标准节点）：直接输出原始内容
 
@@ -4575,8 +4258,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
     }
 
-
-
     if (!u._lastProxies || u._lastProxies.length === 0) {
 
       return tg('editMessageText', env.BOT_TOKEN, {
@@ -4594,8 +4275,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       });
 
     }
-
-
 
     // 非 gost 格式的标准节点转换
 
@@ -4937,8 +4616,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
     }
 
-
-
     // Surge/Surfboard + WG：以原生 YAML 为主输出或分链
 
     const surgeWgAll = proxiesForConvert.filter(p => p.type === 'wireguard');
@@ -5023,8 +4700,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
     }
 
-
-
     if (!output) {
 
       return tg('editMessageText', env.BOT_TOKEN, {
@@ -5039,8 +4714,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
     }
 
-
-
     tg('editMessageText', env.BOT_TOKEN, {
 
       chat_id: cid, message_id: mid,
@@ -5048,8 +4721,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       text: '\u{1F504} \u8F6C\u6362\u4E2D... (' + fmtLabel + ')', parse_mode: 'HTML',
 
     });
-
-
 
     try {
 
@@ -5068,8 +4739,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
       }, getEffectiveMaxAccess(u));
 
       u._lastContent = String(output);
-
-
 
       // Surge/Surfboard + 混合节点：主输出已含非 WG，WG 节点分链输出原生 YAML
 
@@ -5097,9 +4766,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
       }
 
-
-
-
       // Gost 侧链
 
       if (u._gostInput) {
@@ -5117,8 +4783,6 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
         extraUrls.push({ text: '🔄 Gost', url: gostUrl });
 
       }
-
-
 
       const effTtl2 = getEffectiveTtl(u);
 
@@ -5172,21 +4836,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
-
-
-
-
-
-
 // ==================== YAML 模板管理 ====================
-
-
-
-
-
-
 
 // --- Repo template helpers ---
 
@@ -5199,8 +4849,6 @@ function getLandingBase(env) {
   return 'https://raw.githubusercontent.com/Linsars/sub-store-bot/main/landing';
 
 }
-
-
 
 async function fetchRepoTemplates(env) {
 
@@ -5243,10 +4891,6 @@ async function fetchRepoTemplates(env) {
   } catch { return []; }
 
 }
-
-
-
-
 
 async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
 
@@ -5318,8 +4962,6 @@ async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_tmpl_edit(env, uid, cid, mid, u, d, q) {
 
   u.state = 'TMPL_EDIT';
@@ -5341,8 +4983,6 @@ async function cb_tmpl_edit(env, uid, cid, mid, u, d, q) {
   });
 
 }
-
-
 
 async function cb_tmpl_select_r(env, uid, cid, mid, u, d, q) {
 
@@ -5366,8 +5006,6 @@ async function cb_tmpl_select_r(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_tmpl_select_u(env, uid, cid, mid, u, d, q) {
 
   const idx = parseInt(d.split(':')[1]);
@@ -5388,8 +5026,6 @@ async function cb_tmpl_select_u(env, uid, cid, mid, u, d, q) {
 
 }
 
-
-
 async function cb_tmpl_del(env, uid, cid, mid, u, d, q) {
 
   const idx = parseInt(d.split(':')[1]);
@@ -5405,8 +5041,6 @@ async function cb_tmpl_del(env, uid, cid, mid, u, d, q) {
   return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
 
 }
-
-
 
 async function cb_tmpl_sync(env, uid, cid, mid, u, d, q) {
 
@@ -5427,12 +5061,6 @@ async function cb_tmpl_sync(env, uid, cid, mid, u, d, q) {
   return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
 
 }
-
-
-
-
-
-
 
 // Clean YAML template: remove proxies section content
 
@@ -5458,15 +5086,7 @@ function cleanYamlForTemplate(text) {
 
 }
 
-
-
-
-
-
-
   // ==================== Worker 入口 ====================
-
-
 
 export default {
 
@@ -5478,11 +5098,7 @@ export default {
 
     const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
 
-
-
     if (request.method === 'OPTIONS') return new Response('', { headers: cors });
-
-
 
     // 调试路由（需设置 DEBUG_TOKEN 环境变量）
 
@@ -5506,8 +5122,6 @@ export default {
 
     }
 
-
-
     // API: 文本保存 (jtb-clip 兼容)
 
     if (path === '/save' && request.method === 'POST') {
@@ -5529,8 +5143,6 @@ export default {
       }
 
     }
-
-
 
     // API: 链接状态查询（落地页使用）
 
@@ -5578,8 +5190,6 @@ export default {
 
     }
 
-
-
     // API: 短链读取（支持 落地页/阅后即焚/独立IP按次/伪装流量）
 
     if (path.startsWith('/share/')) {
@@ -5596,8 +5206,6 @@ export default {
 
       }
 
-
-
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 
       const burn = raw.burn || false;
@@ -5611,8 +5219,6 @@ export default {
       const consumed = raw.consumed || false;
 
       const landingConsumed = raw.landingConsumed || false;
-
-
 
       // --- 获取落地页 HTML 辅助函数 ---
 
@@ -5650,8 +5256,6 @@ export default {
 
       }
 
-
-
       // --- 渲染落地页（假链详情）---
 
       // realStatus: 'alive' | 'consumed' | 'expired'
@@ -5672,13 +5276,9 @@ export default {
 
       }
 
-
-
       // --- 真链是否已失效 ---
 
       const realDead = consumed || !raw.text;
-
-
 
       // ===== ?raw 请求（真链）=====
 
@@ -5722,8 +5322,6 @@ export default {
 
       }
 
-
-
       // ===== 落地页模式（landing + 非 ?raw）=====
 
       if (landing) {
@@ -5731,8 +5329,6 @@ export default {
         // 检查假链是否已过期（IP 上限或 TTL）
 
         let myLandingConsumed = landingConsumed;
-
-
 
         if (!myLandingConsumed && maxIPs > 0) {
 
@@ -5756,8 +5352,6 @@ export default {
 
         }
 
-
-
         // 真链状态
 
         const realStatus = realDead ? 'consumed' : 'alive';
@@ -5765,8 +5359,6 @@ export default {
         // 假链状态
 
         const lStatus = myLandingConsumed ? 'consumed' : 'alive';
-
-
 
         // 三振规则：失败的落地页被访问 3 次后彻底删 KV
 
@@ -5786,13 +5378,9 @@ export default {
 
         }
 
-
-
         return renderLandingPage(realStatus, lStatus);
 
       }
-
-
 
       // ===== 非落地页、非 ?raw → 直接返回内容 =====
 
@@ -5812,8 +5400,6 @@ export default {
 
       }
 
-
-
       // 独立 IP 上限
 
       const accessedIPs = Array.isArray(raw.accessedIPs) ? raw.accessedIPs : [];
@@ -5823,8 +5409,6 @@ export default {
         return Response.redirect('https://www.google.com', 302);
 
       }
-
-
 
       // 新 IP 才加入列表
 
@@ -5844,15 +5428,11 @@ export default {
 
       }
 
-
-
       const respHeaders = { 'Content-Type': 'text/plain; charset=utf-8' };
 
       return new Response(raw.text, { headers: respHeaders });
 
     }
-
-
 
     // Telegram Webhook
 
@@ -5862,8 +5442,6 @@ export default {
 
       if (!body) return new Response('ok');
 
-
-
       // 验证 X-Telegram-Bot-Api-Secret-Token
 
       if (env.WEBHOOK_SECRET && request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.WEBHOOK_SECRET) {
@@ -5871,8 +5449,6 @@ export default {
         return new Response('unauthorized', { status: 401 });
 
       }
-
-
 
       ctx.waitUntil(
 
@@ -5966,8 +5542,6 @@ export default {
 
     }
 
-
-
     // API: 订阅转换 (给外部调)
 
     if (path === '/api/convert' && request.method === 'POST') {
@@ -6004,8 +5578,6 @@ export default {
 
         }
 
-
-
         if (!proxies || proxies.length === 0) {
 
           return new Response(
@@ -6041,8 +5613,6 @@ export default {
       }
 
     }
-
-
 
     // 根路由：设了 CLIP_URL → 跳 google 防泄露
 
@@ -6104,8 +5674,6 @@ export default {
 
     }
 
-
-
     // /setup: 自动激活 webhook + 注册命令（给部署者用）
 
     if (url.pathname === '/setup') {
@@ -6133,8 +5701,6 @@ export default {
           });
 
           setupResult.webhook = (await r1.json()).ok === true;
-
-
 
           const r2 = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setMyCommands`, {
 
@@ -6190,8 +5756,6 @@ export default {
 
     }
 
-
-
     // Health (fallback)
 
     return new Response(
@@ -6221,5 +5785,3 @@ export default {
 };
 
 // Simple Clash YAML proxies extractor
-
---43d9080ff6c636ca15fd9df1536f22ebee6ca92a11d9ab3619c3154d3a47--
