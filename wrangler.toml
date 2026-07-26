@@ -9,7 +9,8 @@ workers_dev = true
 # 把 ID 设为 Secret KV_ID，在 wrangler.toml 引用：
 [[kv_namespaces]]
 binding = "KV"
-[[OrderRow]]
+[[d1_database]]
+database_name = "ip-geo"
 binding = "GEOIP_DB"
 # id = "你的 KV Namespace ID"
 
