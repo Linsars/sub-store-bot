@@ -1,51 +1,26 @@
+## v2.35.0 (2026-07-28)
+
+### 收集器 & 短链
+- 收集器 KV 持久化：`_collected` / `_collectMode` 存入 KV，解决多 isolate 内存隔离
+- 非收集模式确认框：发送文件/文本/链接弹确认框，确认后转短链
+- 短链拉取：fetchSub 和多 URL 路径自动加 `?raw`
+- 短链结果页：统一使用 `resultKb`（🔗 主链 + 📤 分享 + 🏠 主页）
+
+### 本次时限 & 流量信息
+- 新增「本次时限」菜单：临时覆盖时效/次数/流量信息，不影响主页默认值
+- 流量信息模板选择：`cb_conv_flow_menu` + `cb_flow_pick`，选完回到本次时限菜单
+- 流量信息持久化：`saveUserConfig` 合并写入，`loadUserConfig` 从 KV 自动重建
+- `cb_flow_pick` 从模板选择进入时返回本次时限菜单（非格式选择页）
+
+### YAML 解析器
+- `parseClashYaml` 支持 alpn YAML 数组格式
+- 嵌套对象支持数组值（`- item` 格式）
+- 扩展 nestedKeys：覆盖 vless-opts/trojan-opts/shadowsocks-opts 等所有协议
+- 新增字段：idle-session-*、udp-over-tcp、udp-relay-mode、ip-version 等
+
+### 代码质量
+- 统一 null 判空：`!= null` 替代混用的 `!== undefined` / `|| 0`
+- 移除死代码：`cb_flow_toggle`、`cb_conv_back_flow`、`flow_toggle` 路由
+- `saveUserConfig` 合并写入（只更新传入字段，保留旧值）
+
 ## v2.34.1 (2026-07-26)
-
-- 去重统计修复：格式选择页显示原始节点数和去重数
-- 删除短链后返回短链列表（而非主页）
-- 清理死代码、调试日志
-- HTTP 拉取失败显示具体错误信息
-
-## v2.34.0 (2026-07-26)
-
-- 节点名自动添加国家旗帜 emoji（基于关键词匹配）
-- 30 个国家/地区支持（参考 sublink-worker 数据）
-- 短英文词（HK/US/JP 等）自动加 `\b` 词边界，防止误匹配
-- 别名按长度降序匹配，避免 "Indonesia" 被 "India" 截断
-- 远程订阅和本地订阅输出均统一调用 addFlag
-- 输出格式转换时统一加旗帜（不影响格式选择页显示）
-## v2.33.0 (2026-07-25)
-
-- parseClashYaml 支持 0 缩进 YAML（动态 indent）
-- 新增 sing-box/Egern YAML 解析器
-- Egern 输出转 proper YAML（不再输出 JSON-in-YAML）
-- v2ray/URI 修复：`simple-obfs` → `obfs-local`，去掉多余 `/?`
-- 修复阅后即焚短链状态不更新 + IP 未记录
-- 移除 SS2022 侧链（全格式已支持）
-
-## v2.32.1 (2026-07-25)
-
-- parseClashYaml 支持 0 缩进节点（动态 indent 计算）
-- 修复 proxy-groups 条目误解析
-
-## v2.32.0 (2026-07-25)
-
-- YAML 模板系统：从仓库 `landing/` 动态加载模板
-- 新增 `LANDING_DIR` 变量，替代 `LANDING_HTML_URL`
-- 模板管理：手动同步仓库按钮
-- 更新日志功能
-- 修复：cb_menu 清理 Gost 状态残留
-- 修复：parseClashYaml 支持 2/4/8 空格缩进
-- 修复：去重支持 anytls/tuic/juicity/hysteria/wireguard
-- 删除死代码 parseTemplate
-
-## v2.31.0 (2026-07-20)
-
-- safeExecute 结构化错误处理
-- 收集模式：URL + 文件多订阅合并
-- Clash YAML 快速解析器
-
-## v2.30.0 (2026-07-15)
-
-- WireGuard 节点完整支持
-- Gost 节点侧链输出
-- 多格式输出：13 种 + Snell

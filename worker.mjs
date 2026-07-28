@@ -26,7 +26,7 @@
 
 import { ProxyUtils } from './proxy-utils.esm.js';
 
-const BOT_VERSION = '2.34.1';
+const BOT_VERSION = '2.35.0';
 
 // ==================== 工具函数 ====================
 
@@ -467,7 +467,7 @@ function parseClashYaml(text) {
     let fm;
 
     // Nested object keys: plugin-opts, ws-opts, h2-opts, http-opts, grpc-opts
-    const nestedKeys = new Set(['plugin-opts', 'ws-opts', 'h2-opts', 'http-opts', 'grpc-opts']);
+    const nestedKeys = new Set(['plugin-opts', 'ws-opts', 'h2-opts', 'http-opts', 'grpc-opts', 'obfs-opts', 'reality-opts', 'vless-opts', 'trojan-opts', 'shadowsocks-opts', 'mkcp-opts', 'mekya-opts', 'xhttp-opts', 'ech-opts', 'restls-opts', 'shadow-tls-opts', 'jls-opts']);
     const nestedObjs = {};
 
     while ((fm = fieldRe.exec(block)) !== null) {
@@ -478,16 +478,62 @@ function parseClashYaml(text) {
 
       if (nestedKeys.has(k) && !v) {
         // Empty value = nested object: collect sub-lines with deeper indent
-        const obj = {};
         const afterNl = block.indexOf('\n', fm.index);
         const subLines = block.slice(afterNl + 1).split('\n');
-        for (const line of subLines) {
+        const obj = {};
+        for (let si = 0; si < subLines.length; si++) {
+          const line = subLines[si];
           const trimmed = line.trimStart();
           if (!trimmed) continue;
           const lineIndent = line.length - trimmed.length;
           if (lineIndent <= fLo) break;
-          const kv = trimmed.match(/^([\w][\w-]*?):\s*(.+)/);
-          if (kv) obj[kv[1]] = kv[2].trim().replace(/^['"]|['"]$/g, '');
+          const kv = trimmed.match(/^([\w][\w-]*?):\s*(.*)/);
+          if (!kv) continue;
+          const sk = kv[1], sv = kv[2].trim();
+          if (!sv) {
+            // No value = check for array or sub-object
+            const subBase = lineIndent + 2;
+            let isArray = false;
+            // Check if next non-empty line is an array item
+            for (let sj = si + 1; sj < subLines.length; sj++) {
+              const st2 = subLines[sj].trimStart();
+              if (!st2) continue;
+              const slIndent2 = subLines[sj].length - st2.length;
+              if (slIndent2 <= lineIndent) break;
+              if (st2.startsWith('- ')) { isArray = true; break; }
+              break; // non-array sub-object
+            }
+            if (isArray) {
+              const arr = [];
+              for (let sj = si + 1; sj < subLines.length; sj++) {
+                const sl = subLines[sj];
+                const st = sl.trimStart();
+                if (!st) continue;
+                const slIndent = sl.length - st.length;
+                if (slIndent <= lineIndent) break;
+                const itemMatch = st.match(/^-\s+(.+)/);
+                if (itemMatch) arr.push(itemMatch[1].trim().replace(/^['"]|['"]$/g, ''));
+                else if (st === '-') arr.push('');
+                else break;
+              }
+              obj[sk] = arr;
+            } else {
+              // Sub-object (e.g. headers:)
+              const subObj = {};
+              for (let sj = si + 1; sj < subLines.length; sj++) {
+                const sl = subLines[sj];
+                const st = sl.trimStart();
+                if (!st) continue;
+                const slIndent = sl.length - st.length;
+                if (slIndent < subBase) break;
+                const skv = st.match(/^([\w][\w-]*?):\s*(.+)/);
+                if (skv) subObj[skv[1]] = skv[2].trim().replace(/^['"]|['"]$/g, '');
+              }
+              obj[sk] = subObj;
+            }
+          } else {
+            obj[sk] = sv.replace(/^['"]|['"]$/g, '');
+          }
         }
         nestedObjs[k] = obj;
       }
@@ -515,11 +561,45 @@ function parseClashYaml(text) {
 
       else if (k === 'skip-cert-verify') proxy['skip-cert-verify'] = v === 'true' || v === true;
 
-      else if (k === 'alpn') proxy.alpn = typeof v === 'string' ? v.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')) : v;
+      else if (k === 'alpn') {
+        if (!v) {
+          // Empty value = YAML array: collect subsequent "- item" lines
+          const afterNl = block.indexOf('\n', fm.index);
+          const subLines = block.slice(afterNl + 1).split('\n');
+          const arr = [];
+          for (const sl of subLines) {
+            const trimmed = sl.trimStart();
+            const lineIndent = sl.length - trimmed.length;
+            if (lineIndent <= fLo) break;
+            const itemMatch = trimmed.match(/^-\s+(.+)/);
+            if (itemMatch) arr.push(itemMatch[1].trim().replace(/^['"]|['"]$/g, ''));
+            else if (trimmed.startsWith('-')) arr.push('');
+            else break;
+          }
+          proxy.alpn = arr.length > 0 ? arr : [];
+        } else {
+          proxy.alpn = typeof v === 'string' ? v.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')) : v;
+        }
+      }
 
       else if (k === 'client-fingerprint') proxy['client-fingerprint'] = v;
 
       else if (k === 'plugin') proxy.plugin = v;
+      else if (k === 'idle-session-check-interval') proxy['idle-session-check-interval'] = parseInt(v) || 0;
+      else if (k === 'idle-session-timeout') proxy['idle-session-timeout'] = parseInt(v) || 0;
+      else if (k === 'min-idle-session') proxy['min-idle-session'] = parseInt(v) || 0;
+      else if (k === 'udp-over-tcp') proxy['udp-over-tcp'] = v === 'true' || v === true;
+      else if (k === 'udp-relay-mode') proxy['udp-relay-mode'] = v;
+      else if (k === 'ip-version') proxy['ip-version'] = v;
+      else if (k === 'alterId') proxy['alterId'] = parseInt(v) || 0;
+      else if (k === 'psk') proxy.psk = v;
+      else if (k === 'obfs') proxy.obfs = v;
+      else if (k === 'version') proxy.version = parseInt(v) || 0;
+      else if (k === 'username') proxy.username = v;
+      else if (k === 'dialer-proxy') proxy['dialer-proxy'] = v;
+      else if (k === 'fingerprint') proxy.fingerprint = v;
+      else if (k === 'encryption') proxy.encryption = v;
+      else if (k === 'smux') proxy.smux = v;
 
       else if (k === 'tfo') proxy.tfo = v === 'true' || v === true;
 
@@ -865,7 +945,7 @@ function mainKb() {
 
         { text: '\u{1F4CB} 我的短链', callback_data: 'my_links_0' },
 
-        { text: '\u{1F4DD} YAML \u6A21\u677F', callback_data: 'tmpl_menu' },
+        { text: '\u{1F4DD} \u6A21\u677F\u7BA1\u7406', callback_data: 'tmpl_menu' },
 
       ],
 
@@ -931,7 +1011,7 @@ function fmtKb(allowed, convTtl, ttlDefault, u) {
 
   if (row.length) rows.push(row);
 
-  const ttlVal = convTtl !== undefined && convTtl !== null ? convTtl : (ttlDefault !== undefined ? ttlDefault : 0);
+  const ttlVal = convTtl != null ? convTtl : (ttlDefault != null ? ttlDefault : 0);
 
   const ttlLabel = formatTtlLabel(ttlVal);
 
@@ -1249,15 +1329,87 @@ function getState(uid) {
 
 }
 
+
+// Helper: get collectMode (memory + KV fallback)
+async function getCollectModeSync(uid, u, env) {
+  if (u._collectMode) return u._collectMode;
+  const mode = await getCollectMode(uid, env);
+  if (mode) u._collectMode = mode;
+  return mode;
+}
+
+// Helper: set collectMode (memory + KV)
+async function setCollectMode(uid, u, mode, env) {
+  u._collectMode = mode;
+  await saveCollectMode(uid, mode, env);
+}
+
+// ==================== 收集器 KV 持久化（解决多 isolate 内存隔离问题） ====================
+
+async function getCollected(uid, env) {
+  const raw = await env.KV.get('collected:' + uid, { type: 'json' }).catch(() => null);
+  return raw || [];
+}
+
+async function saveCollected(uid, items, env) {
+  await env.KV.put('collected:' + uid, JSON.stringify(items), { expirationTtl: 7200 });
+}
+
+async function clearCollected(uid, env) {
+  await env.KV.delete('collected:' + uid).catch(() => {});
+}
+
+async function getCollectMode(uid, env) {
+  return await env.KV.get('collectmode:' + uid, { type: 'text' }).catch(() => null);
+}
+
+async function saveCollectMode(uid, mode, env) {
+  if (mode) {
+    await env.KV.put('collectmode:' + uid, mode, { expirationTtl: 7200 });
+  } else {
+    await env.KV.delete('collectmode:' + uid).catch(() => {});
+  }
+}
+
 // ==================== 用户配置持久化（KV 存储） ====================
 
 async function loadUserConfig(uid, env) {
 
   try {
 
-    const raw = await env.KV.get('cfgu:' + uid, { type: 'json' });
+    const raw = await env.KV.get('cfgu:' + uid, { type: 'json' }) || {};
 
-    return raw || {};
+    // 如果 cfgu 里没有 _flowHeader/_flowName，从 tmpl_flow_active 重建
+
+    if (!raw._flowHeader && !raw._flowName) {
+
+      try {
+
+        const activeIdx = parseInt(await env.KV.get('tmpl_flow_active:' + uid));
+
+        if (!isNaN(activeIdx) && activeIdx >= 0) {
+
+          const templates = JSON.parse(await env.KV.get('tmpl_flow:' + uid)) || [];
+
+          if (activeIdx < templates.length) {
+
+            raw._flowHeader = templates[activeIdx].header;
+
+            raw._flowName = templates[activeIdx].name;
+
+            // 回写到 cfgu，下次不用再重建
+
+            await env.KV.put('cfgu:' + uid, JSON.stringify(raw)).catch(() => {});
+
+          }
+
+        }
+
+      } catch {}
+
+    }
+
+    return raw;
 
   } catch { return {}; }
 
@@ -1265,13 +1417,23 @@ async function loadUserConfig(uid, env) {
 
 async function saveUserConfig(uid, env, state) {
 
-  const cfg = {};
+  // 读取现有配置，合并更新（避免丢失未改动的字段）
 
-  // 只持久化主页「有效期」的默认设置，不持久化格式选择页的临时覆盖
+  let existing = {};
 
-  if (state.ttl != null) cfg.ttl = state.ttl;
+  try { const raw = await env.KV.get('cfgu:' + uid, { type: 'json' }); if (raw) existing = raw; } catch {}
 
-  if (state._accessLimit != null) cfg._accessLimit = state._accessLimit;
+  const cfg = { ...existing };
+
+  // 只更新明确传入的字段（不覆盖未传入的）
+
+  if ('ttl' in state) cfg.ttl = state.ttl;
+
+  if ('_accessLimit' in state) cfg._accessLimit = state._accessLimit;
+
+  if ('_flowHeader' in state) cfg._flowHeader = state._flowHeader;
+
+  if ('_flowName' in state) cfg._flowName = state._flowName;
 
   await env.KV.put('cfgu:' + uid, JSON.stringify(cfg)).catch(() => {});
 
@@ -1494,6 +1656,18 @@ async function getUaList(uid, env) {
 }
 
 async function fetchSub(url, uid, env) {
+  // 自己域名的短链：直接从 KV 读取，避免 CF 无法 fetch 自己域名
+  const clipBase = (env.CLIP_URL || '').replace(/\/+$/, '');
+  if (clipBase && url.startsWith(clipBase + '/share/')) {
+    const id = url.split('/share/')[1]?.split(/[?#]/)[0];
+    if (id) {
+      const kvData = await env.KV.get('share_' + id, { type: 'json' }).catch(() => null);
+      if (kvData && kvData.text) {
+        return { text: kvData.text, ua: 'KV_DIRECT' };
+      }
+      return { text: '', ua: 'KV_NOT_FOUND' };
+    }
+  }
 
   const uaList = await getUaList(uid, env);
 
@@ -1622,6 +1796,94 @@ async function fetchSub(url, uid, env) {
   }
 
   return { text: bestText, ua: bestUa, count: bestCount, proxies: bestParsed };
+
+}
+
+function parseSubInfo(header) {
+
+  if (!header) return null;
+
+  const map = {};
+
+  for (const part of header.split(';')) {
+
+    const trimmed = part.trim();
+
+    const eq = trimmed.indexOf('=');
+
+    if (eq === -1) continue;
+
+    const k = trimmed.slice(0, eq).trim();
+
+    const v = trimmed.slice(eq + 1).trim();
+
+    if (v && /^\d+$/.test(v)) map[k] = parseInt(v, 10);
+
+  }
+
+  if (Object.keys(map).length === 0) return null;
+
+  const fmt = (bytes) => {
+
+    if (bytes == null) return '?';
+
+    if (bytes < 1024) return bytes + ' B';
+
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+
+    return (bytes / 1073741824).toFixed(2) + ' GB';
+
+  };
+
+  const now = Math.floor(Date.now() / 1000);
+
+  const upload = map.upload || 0;
+
+  const download = map.download || 0;
+
+  const total = map.total || 0;
+
+  const used = upload + download;
+
+  const remain = total - used;
+
+  const expire = map.expire || 0;
+
+  let expireText = '未知';
+
+  let remainTime = '';
+
+  if (expire > 0) {
+
+    const d = new Date(expire * 1000);
+
+    expireText = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+
+    const diff = expire - now;
+
+    if (diff > 0) {
+
+      const days = Math.floor(diff / 86400);
+
+      const hours = Math.floor((diff % 86400) / 3600);
+
+      remainTime = days + '天' + hours + '小时';
+
+    } else {
+
+      remainTime = '已过期';
+
+    }
+
+  } else {
+
+    expireText = '长期有效';
+
+  }
+
+  return { upload: fmt(upload), download: fmt(download), total: fmt(total), used: fmt(used), remain: fmt(remain < 0 ? 0 : remain), expire: expireText, remainTime, isExpired: expire > 0 && expire < now, isExhausted: total > 0 && used >= total };
 
 }
 
@@ -1891,7 +2153,7 @@ function formatRemaining(expiresAt) {
 
 function getEffectiveTtl(u) {
 
-  return u._convTtl !== undefined && u._convTtl !== null ? u._convTtl : (u.ttl !== undefined ? u.ttl : 0);
+  return u._convTtl != null ? u._convTtl : (u.ttl != null ? u.ttl : 0);
 
 }
 
@@ -1924,6 +2186,10 @@ async function saveToClip(text, ttl, env, maxAccess, extra = {}) {
     landing: extra.landing || false,
 
     nodeCount: extra.nodeCount || 0,
+
+    flowHeader: extra.flowHeader || null,
+
+    flowName: extra.flowName || null,
 
     _createdAt: Date.now(),
 
@@ -2016,6 +2282,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
   // --- 拉取 ---
 
   let allProxies = [];
+  let totalSkipped = 0;
 
   let rawTexts = [];
 
@@ -2052,16 +2319,50 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
         : subText;
 
       let parsed = null;
-
       try { parsed = ProxyUtils.parse(cleanText); } catch { parsed = null; }
-
+      // ProxyUtils 失败时 fallback 到 parseClashYaml
+      if (!parsed || parsed.length === 0) {
+        try { const y = parseClashYaml(cleanText); if (y.length > 0) parsed = y; } catch {}
+      }
       if (parsed && parsed.length > 0) {
 
         allProxies = parsed;
 
         rawTexts.push(cleanText);
 
-        usedUas.push(uniqueUrls[0] + ' \u2192 ' + (subResult.ua === 'proxy' ? 'Karing' : subResult.ua) + ' \u2192 ' + parsed.length);
+        // 拉取订阅流量信息（HEAD 请求，3秒超时）
+
+        let subInfo = null;
+
+        try {
+
+          const resp = await Promise.race([
+
+            fetch(uniqueUrls[0], { headers: { 'User-Agent': 'ClashforWindows/0.19.21', 'Range': 'bytes=0-0' } }),
+
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+
+          ]);
+
+          subInfo = resp.headers.get('subscription-userinfo') || null;
+
+        } catch { /* ignore */ }
+
+        const si = subInfo ? parseSubInfo(subInfo) : null;
+
+        let siLine = '';
+
+        if (si) {
+
+          siLine = '\n    \u{1F4CA} ' + si.used + ' / ' + si.total + ' (\u5269\u4F59 ' + si.remain + ')' + (si.expire !== '未知' ? '  \u5230\u671F: ' + si.expire + (si.remainTime ? ' (' + si.remainTime + ')' : '') : '  \u5230\u671F: ' + si.expire);
+
+          if (si.isExpired) siLine += ' \u26A0\uFE0F';
+
+          if (si.isExhausted) siLine += ' \u26A0\uFE0F';
+
+        }
+
+        usedUas.push(uniqueUrls[0] + ' \u2192 ' + (subResult.ua === 'proxy' ? 'Karing' : subResult.ua) + ' \u2192 ' + parsed.length + siLine);
 
       } else {
 
@@ -2079,8 +2380,6 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
     // 多 URL
 
-    await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 ' + uniqueUrls.length + ' \u4E2A\u8BA2\u9605...' });
-
     if (uniqueUrls.length >= 4) {
 
       // 4+ URL：首选首个 UA 拉取，拉不出再换备用
@@ -2093,23 +2392,43 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
       const contentSeen = new Map();
 
+      let fetchedCount = 0;
+
       for (const url of uniqueUrls) {
 
+        fetchedCount++;
+
+        await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 [' + fetchedCount + '/' + uniqueUrls.length + ']\n\n' + uniqueUrls.map((u2, i) => {
+
+          const short = u2.length > 40 ? u2.slice(0, 40) + '...' : u2;
+
+          return (i < fetchedCount - 1 ? '\u2705' : (i === fetchedCount - 1 ? '\u{1F504}' : '\u23F3')) + ' ' + short;
+
+        }).join('\n') });
+
         let text = '';
-
         let usedUa = primary;
-
+        // 自己域名的短链：直接从 KV 读取
+        const clipBase2 = (env.CLIP_URL || '').replace(/\/+$/, '');
+        const isOwnShare = clipBase2 && url.startsWith(clipBase2 + '/share/');
+        if (isOwnShare) {
+          const sid = url.split('/share/')[1]?.split(/[?#]/)[0];
+          const kvD = sid ? await env.KV.get('share_' + sid, { type: 'json' }).catch(() => null) : null;
+          text = (kvD && kvD.text) ? kvD.text : '';
+          usedUa = 'KV_DIRECT';
+        } else {
         try {
 
           text = await Promise.race([
 
             fetch(url, { headers: { 'User-Agent': primary } }).then(r => r.text()),
 
-            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
 
           ]);
 
         } catch { text = ''; }
+        }
 
         if (!text || text.length < 50 || text.includes('\u8BBF\u95EE\u88AB\u62D2\u7EDD') || text.includes('\u4E0D\u652F\u6301\u6D4F\u89C8\u5668') || text.includes('<html') || text.includes('<HTML') || text.includes('<!DOC')) {
 
@@ -2123,11 +2442,17 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
                 fetch(url, { headers: { 'User-Agent': fb } }).then(r => r.text()),
 
-                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
 
               ]);
 
-              if (text && text.length >= 50 && !text.includes('<html') && !text.includes('<!DOC')) { usedUa = fb; break; }
+              if (text && text.length >= 50 && !text.includes('<html') && !text.includes('<!DOC')) {
+
+                usedUa = fb;
+
+                break;
+
+              }
 
             } catch { continue; }
 
@@ -2164,12 +2489,59 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
         rawTexts.push(text);
 
         let parsed = null;
-
         try { parsed = ProxyUtils.parse(text); } catch { parsed = null; }
-
+        // ProxyUtils 失败时 fallback 到 parseClashYaml
+        if (!parsed || parsed.length === 0) {
+          try { const y = parseClashYaml(text); if (y.length > 0) parsed = y; } catch {}
+        }
         if (parsed && parsed.length > 0) {
 
-          allProxies = allProxies.concat(parsed);
+          // 拉取流量信息
+          let subInfo = null;
+          // 自己域名的短链：从 KV 读 flowHeader
+          if (usedUa === 'KV_DIRECT') {
+            const sidFlow = url.split('/share/')[1]?.split(/[?#]/)[0];
+            if (sidFlow) {
+              const kvFlow = await env.KV.get('share_' + sidFlow, { type: 'json' }).catch(() => null);
+              if (kvFlow && kvFlow.flowHeader) subInfo = kvFlow.flowHeader;
+            }
+          } else {
+            try {
+              const resp = await Promise.race([
+                fetch(url, { headers: { 'User-Agent': 'ClashforWindows/0.19.21', 'Range': 'bytes=0-0' } }),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+              ]);
+              subInfo = resp.headers.get('subscription-userinfo') || null;
+            } catch { /* ignore */ }
+          }
+
+          const si = subInfo ? parseSubInfo(subInfo) : null;
+
+          // 过期或流量用尽的订阅不合并节点
+
+          if (si && (si.isExpired || si.isExhausted)) {
+
+            const reason = si.isExpired ? '已过期' : '流量已用尽';
+
+            totalSkipped += parsed.length;
+
+            let siLine = '';
+
+            if (si) {
+
+              siLine = '  ' + reason;
+
+              if (si.expire !== '未知') siLine += ' (' + si.expire + ')';
+
+              if (si.isExhausted) siLine += '  \u5269\u4F59 ' + si.remain + '/' + si.total;
+
+            }
+
+            usedUas.push(url + ' \u2192 ' + usedUa + ' \u2192 \u26A0\uFE0F ' + parsed.length + '\u4E2A\u8282\u70B9\u5DF2\u8DF3\u8FC7' + siLine);
+
+            continue;
+
+          }
 
           const types = {};
 
@@ -2177,7 +2549,17 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
           const ts = Object.entries(types).map(([k, v]) => k + ':' + v).join(', ');
 
-          const entryText = url + ' \u2192 ' + usedUa + ' \u2192 ' + parsed.length + ' (' + ts + ')';
+          let siLine = '';
+
+          if (si) {
+
+            siLine = '\n    \u{1F4CA} ' + si.used + ' / ' + si.total + ' (\u5269\u4F59 ' + si.remain + ')' + (si.expire !== '未知' ? '  \u5230\u671F: ' + si.expire + (si.remainTime ? ' (' + si.remainTime + ')' : '') : '  \u5230\u671F: ' + si.expire);
+
+          }
+
+          allProxies = allProxies.concat(parsed);
+
+          const entryText = url + ' \u2192 ' + usedUa + ' \u2192 ' + parsed.length + ' (' + ts + ')' + siLine;
 
           contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
 
@@ -2203,80 +2585,113 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
       const contentSeen = new Map();
 
+      let fetchedCount = 0;
+
       for (const url of uniqueUrls) {
 
-        const uaList = await getUaList(uid, env);
+        fetchedCount++;
 
-        if (uaList.length === 0) uaList.push(FETCH_UAS[0]);
+        await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 [' + fetchedCount + '/' + uniqueUrls.length + ']\n\n' + uniqueUrls.map((u2, i) => {
+
+          const short = u2.length > 40 ? u2.slice(0, 40) + '...' : u2;
+
+          return (i < fetchedCount - 1 ? '\u2705' : (i === fetchedCount - 1 ? '\u{1F504}' : '\u23F3')) + ' ' + short;
+
+        }).join('\n') });
 
         let bestText = '', bestUa = '', bestCount = 0, bestParsed = null;
 
-        const seen = new Set();
+        // 自己域名的短链：直接从 KV 读取，避免 CF 无法 fetch 自己域名
+        const clipBase3 = (env.CLIP_URL || '').replace(/\/+$/, '');
+        if (clipBase3 && url.startsWith(clipBase3 + '/share/')) {
+          const sid3 = url.split('/share/')[1]?.split(/[?#]/)[0];
+          if (sid3) {
+            const kvD3 = await env.KV.get('share_' + sid3, { type: 'json' }).catch(() => null);
+            if (kvD3 && kvD3.text) {
+              bestText = kvD3.text;
+              bestUa = 'KV_DIRECT';
+              try {
+                let p = ProxyUtils.parse(kvD3.text);
+                if (!p || p.length === 0) {
+                  try { const y = parseClashYaml(kvD3.text); if (y.length > 0) p = y; } catch {}
+                }
+                if (p && p.length > 0) bestParsed = p;
+              } catch {}
+            }
+          }
+        }
 
-        const BATCH_SIZE = 5;
+        // 非自己域名或 KV 未命中：HTTP fetch + UA 轮询
+        if (!bestParsed) {
+          const uaList = await getUaList(uid, env);
+          if (uaList.length === 0) uaList.push(FETCH_UAS[0]);
+          const seen = new Set();
+          const BATCH_SIZE = 5;
 
-        for (let batchStart = 0; batchStart < uaList.length; batchStart += BATCH_SIZE) {
+          for (let batchStart = 0; batchStart < uaList.length; batchStart += BATCH_SIZE) {
 
-          const batch = uaList.slice(batchStart, batchStart + BATCH_SIZE);
+            const batch = uaList.slice(batchStart, batchStart + BATCH_SIZE);
 
-          const results = await Promise.allSettled(
+            const results = await Promise.allSettled(
 
-            batch.map(async (ua) => {
+              batch.map(async (ua) => {
+
+                try {
+
+                  const text = await Promise.race([
+
+                    fetch(url, { headers: { 'User-Agent': ua } }).then(r => r.text()),
+
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+
+                  ]);
+
+                  return { text, ua };
+
+                } catch { return { text: '', ua }; }
+
+              })
+
+            );
+
+            for (const r of results) {
+
+              if (r.status !== 'fulfilled') continue;
+
+              const text = r.value.text;
+
+              if (!text || text.length < 50) continue;
+
+              if (text.includes('\u8BBF\u95EE\u88AB\u62D2\u7EDD') || text.includes('\u4E0D\u652F\u6301\u6D4F\u89C8\u5668') || text.includes('<html') || text.includes('<HTML') || text.includes('<!DOC')) continue;
+
+              const key = text.slice(0, 200);
+
+              if (seen.has(key)) continue;
+
+              seen.add(key);
 
               try {
+                let parsed = ProxyUtils.parse(text);
+                if (!parsed || parsed.length === 0) {
+                  try { const y = parseClashYaml(text); if (y.length > 0) parsed = y; } catch {}
+                }
+                if ((parsed?.length || 0) > bestCount) {
 
-                const text = await Promise.race([
+                  bestCount = parsed.length;
 
-                  fetch(url, { headers: { 'User-Agent': ua } }).then(r => r.text()),
+                  bestText = text;
 
-                  new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+                  bestUa = r.value.ua;
 
-                ]);
+                  bestParsed = parsed;
 
-                return { text, ua };
+                }
 
-              } catch { return { text: '', ua }; }
+              } catch {}
 
-            })
-
-          );
-
-          for (const r of results) {
-
-            if (r.status !== 'fulfilled') continue;
-
-            const text = r.value.text;
-
-            if (!text || text.length < 50) continue;
-
-            if (text.includes('\u8BBF\u95EE\u88AB\u62D2\u7EDD') || text.includes('\u4E0D\u652F\u6301\u6D4F\u89C8\u5668') || text.includes('<html') || text.includes('<HTML') || text.includes('<!DOC')) continue;
-
-            const key = text.slice(0, 200);
-
-            if (seen.has(key)) continue;
-
-            seen.add(key);
-
-            try {
-
-              const parsed = ProxyUtils.parse(text);
-
-              if ((parsed?.length || 0) > bestCount) {
-
-                bestCount = parsed.length;
-
-                bestText = text;
-
-                bestUa = r.value.ua;
-
-                bestParsed = parsed;
-
-              }
-
-            } catch {}
+            }
 
           }
-
         }
 
         if (!bestText) {
@@ -2307,7 +2722,52 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
         if (bestParsed && bestParsed.length > 0) {
 
-          allProxies = allProxies.concat(bestParsed);
+          // 拉取流量信息
+          let subInfo = null;
+          // 自己域名的短链：从 KV 读 flowHeader
+          if (bestUa === 'KV_DIRECT') {
+            const sidFlow = url.split('/share/')[1]?.split(/[?#]/)[0];
+            if (sidFlow) {
+              const kvFlow = await env.KV.get('share_' + sidFlow, { type: 'json' }).catch(() => null);
+              if (kvFlow && kvFlow.flowHeader) subInfo = kvFlow.flowHeader;
+            }
+          } else {
+            try {
+              const resp = await Promise.race([
+                fetch(url, { headers: { 'User-Agent': 'ClashforWindows/0.19.21', 'Range': 'bytes=0-0' } }),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+              ]);
+              subInfo = resp.headers.get('subscription-userinfo') || null;
+            } catch { /* ignore */ }
+          }
+
+          const si = subInfo ? parseSubInfo(subInfo) : null;
+
+          // 过期或流量用尽的订阅不合并节点
+
+          if (si && (si.isExpired || si.isExhausted)) {
+
+            const reason = si.isExpired ? '已过期' : '流量已用尽';
+
+            totalSkipped += bestParsed.length;
+
+            let siLine = '';
+
+            if (si) {
+
+              siLine = '  ' + reason;
+
+              if (si.expire !== '未知') siLine += ' (' + si.expire + ')';
+
+              if (si.isExhausted) siLine += '  \u5269\u4F59 ' + si.remain + '/' + si.total;
+
+            }
+
+            usedUas.push(url + ' \u2192 ' + bestUa + ' \u2192 \u26A0\uFE0F ' + bestParsed.length + '\u4E2A\u8282\u70B9\u5DF2\u8DF3\u8FC7' + siLine);
+
+            continue;
+
+          }
 
           const types = {};
 
@@ -2315,9 +2775,19 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
           const ts = Object.entries(types).map(([k, v]) => k + ':' + v).join(', ');
 
+          let siLine = '';
+
+          if (si) {
+
+            siLine = '\n    \u{1F4CA} ' + si.used + ' / ' + si.total + ' (\u5269\u4F59 ' + si.remain + ')' + (si.expire !== '未知' ? '  \u5230\u671F: ' + si.expire + (si.remainTime ? ' (' + si.remainTime + ')' : '') : '  \u5230\u671F: ' + si.expire);
+
+          }
+
+          allProxies = allProxies.concat(bestParsed);
+
           const entryIndex = usedUas.length;
 
-          const entryText = url + ' \u2192 ' + bestUa + ' \u2192 ' + bestParsed.length + ' (' + ts + ')';
+          const entryText = url + ' \u2192 ' + bestUa + ' \u2192 ' + bestParsed.length + ' (' + ts + ')' + siLine;
 
           contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
 
@@ -2343,8 +2813,11 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
   }
 
-  // --- 去重 + 统计 ---
+  // --- 拉取完成 ---
   const totalRaw = allProxies.length;
+  await replyOrEdit(u, cid, env, { text: '\u2705 \u5168\u90E8\u62C9\u53D6\u5B8C\u6210  \u{1F4E5} ' + allProxies.length + ' \u8282\u70B9' + (totalSkipped > 0 ? '  \u{1F6AB} \u8DF3\u8FC7 ' + totalSkipped : '') });
+
+  // --- 去重 + 统计 ---
   allProxies = deduplicateProxies(allProxies);
   if (allProxies.length === 0) {
 
@@ -2361,13 +2834,15 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
   report += ' \u6765\u81EA ' + rawTexts.length + '/' + totalInputUrls + ' \u4E2A\u6E90';
 
+  if (totalSkipped > 0) report += ' (\u8DF3\u8FC7 ' + totalSkipped + ')';
+
   if (errors.length > 0) report += '\n\n\u26A0\uFE0F \u5931\u8D25:\n' + errors.join('\n');
 
   await replyOrEdit(u, cid, env, { text: report });
 
   // 二次去重 + 统计
 
-  const totalNodes = totalRaw;
+  const totalNodes = totalRaw + totalSkipped;
 
   const dupUrlCount = totalInputUrls - uniqueUrls.length;
 
@@ -2383,6 +2858,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
     dupUrls: dupUrlCount,
     dupNodes: before - allProxies.length,
     firstDedup: totalRaw - before,
+    skipped: totalSkipped,
   };
 
   u._lastUrlCount = rawTexts.length + '/' + totalInputUrls;
@@ -2427,11 +2903,39 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
       (u._lastStats.firstDedup > 0 ? ', \u53BB\u91CD: ' + u._lastStats.firstDedup : '') +
 
-      (u._lastStats.dupNodes > 0 ? ', \u91CD\u590D\u8282\u70B9: ' + u._lastStats.dupNodes : '') + ')'
+      (u._lastStats.dupNodes > 0 ? ', \u91CD\u590D\u8282\u70B9: ' + u._lastStats.dupNodes : '') +
+
+      (u._lastStats.skipped > 0 ? ', \u8DF3\u8FC7: ' + u._lastStats.skipped : '') + ')'
 
     : '';
 
   const uaInfo = u._lastFetchUa ? '\n\u{1F916} ' + escapeHTML(u._lastFetchUa) : '';
+
+  // 加载用户选择的流量信息模板
+
+  if (!u._flowHeader) {
+
+    try {
+
+      const flowIdx = parseInt(await env.KV.get('tmpl_flow_active:' + uid));
+
+      if (!isNaN(flowIdx)) {
+
+        const flowTmpls = await getFlowTemplates(uid, env);
+
+        if (flowTmpls[flowIdx]) {
+
+          u._flowHeader = flowTmpls[flowIdx].header;
+
+          u._flowName = flowTmpls[flowIdx].name;
+
+        }
+
+      }
+
+    } catch {}
+
+  }
 
   const fmtText =
 
@@ -2643,6 +3147,176 @@ async function onMsg(msg, env) {
 
   }
 
+  if (u.state && u.state.startsWith('SHORTCODE_')) {
+
+    const oldId = u.state.replace('SHORTCODE_', '');
+
+    const newCode = (msg.text || '').trim();
+
+    u.state = null;
+
+    if (newCode === '/cancel' || !newCode) {
+
+      return replyMsg(env, uid, cid, '\u2716 \u5DF2\u53D6\u6D88', { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u5217\u8868', callback_data: 'my_links_0' }]] });
+
+    }
+
+    if (!/^[a-zA-Z0-9_-]{3,20}$/.test(newCode)) {
+
+      return replyMsg(env, uid, cid, '\u274C \u683C\u5F0F\u9519\u8BEF\uFF0C\u53EA\u5141\u8BB8\u5B57\u6BCD\u3001\u6570\u5B57\u3001\u77ED\u6A2A\u7EBF\uFF0C3-20\u5B57\u7B26', { inline_keyboard: [[{ text: '\u2716 \u53D6\u6D88', callback_data: 'link_' + oldId }]] });
+
+    }
+
+    if (newCode === oldId) {
+
+      return replyMsg(env, uid, cid, '\u274C \u77ED\u7801\u672A\u53D8', { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE', callback_data: 'link_' + oldId }]] });
+
+    }
+
+    const links = await getUserLinks(uid, env);
+
+    const l = links.find(x => x.id === oldId);
+
+    if (!l) return replyMsg(env, uid, cid, '\u274C \u77ED\u94FE\u5DF2\u4E0D\u5B58\u5728');
+
+    if (links.some(x => x.id === newCode)) {
+
+      return replyMsg(env, uid, cid, '\u274C \u77ED\u7801\u5DF2\u5B58\u5728\uFF0C\u8BF7\u6362\u4E00\u4E2A', { inline_keyboard: [[{ text: '\u2716 \u53D6\u6D88', callback_data: 'link_' + oldId }]] });
+
+    }
+
+    const kvRaw = await env.KV.get('share_' + oldId, { type: 'json' }).catch(() => null);
+
+    if (kvRaw) {
+
+      await env.KV.put('share_' + newCode, JSON.stringify(kvRaw));
+
+      await env.KV.delete('share_' + oldId);
+
+    }
+
+    l.id = newCode;
+
+    await env.KV.put('ulinks:' + uid, JSON.stringify(links));
+
+    const clipUrl = ((env.CLIP_URL || '').replace(/\/+$/, '')) + '/share/' + newCode;
+
+    const text = '\u2705 \u77ED\u7801\u5DF2\u66F4\u65B0\uFF1A<code>' + escapeHTML(newCode) + '</code>\n\n' + linkStatusIcon(l) + ' <b>' + escapeHTML(l.preview) + '</b>\n\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
+
+    return replyMsg(env, uid, cid, text, { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE\u5217\u8868', callback_data: 'my_links_0' }]] });
+
+  }
+
+  // 流量信息模板输入
+
+  if (u.state === 'WAITING_FLOW_TEMPLATE') {
+
+    const input = (msg.text || '').trim();
+
+    u.state = null;
+
+    if (input === '/cancel' || !input) {
+
+      return replyMsg(env, uid, cid, '\u2716 \u5DF2\u53D6\u6D88', { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE', callback_data: 'flow_menu' }]] });
+
+    }
+
+    const parts = input.split('|');
+
+    if (parts.length < 2 || !parts[0].trim() || !parts[1].trim()) {
+
+      return replyMsg(env, uid, cid, '\u274C \u683C\u5F0F\u9519\u8BEF\uFF0C\u9700\u8981: \u540D\u79F0|upload\uFF1Bdownload\uFF1Btotal\uFF1Bexpire', { inline_keyboard: [[{ text: '\u2716 \u53D6\u6D88', callback_data: 'flow_menu' }]] });
+
+    }
+
+    const name = parts[0].trim();
+
+    const values = parts.slice(1).join('|').split(/[；;]/);
+
+    if (values.length < 4) {
+
+      return replyMsg(env, uid, cid, '\u274C \u9700\u8981 4 \u4E2A\u503C: upload\uFF1Bdownload\uFF1Btotal\uFF1Bexpire', { inline_keyboard: [[{ text: '\u2716 \u53D6\u6D88', callback_data: 'flow_menu' }]] });
+
+    }
+
+    // \u89E3\u6790\u6D41\u91CF\u503C\uFF08\u652F\u6301 g/m \u540E\u7F00\uFF09
+
+    function parseBytes(str) {
+
+      str = str.trim().toLowerCase();
+
+      if (str === '0') return 0;
+
+      const m = str.match(/^([\d.]+)\s*(g|gb|m|mb)?$/);
+
+      if (!m) return parseInt(str) || 0;
+
+      const num = parseFloat(m[1]);
+
+      const unit = m[2] || '';
+
+      if (unit === 'g' || unit === 'gb') return Math.round(num * 1073741824);
+
+      if (unit === 'm' || unit === 'mb') return Math.round(num * 1048576);
+
+      return Math.round(num);
+
+    }
+
+    // \u89E3\u6790\u5230\u671F\u65F6\u95F4\uFF08\u652F\u6301 YYYY-MM-DD \u6216 Unix \u65F6\u95F4\u6233\uFF09
+
+    function parseExpire(str) {
+
+      str = str.trim();
+
+      if (str === '0') return 0;
+
+      // YYYY-MM-DD
+
+      const dm = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+
+      if (dm) {
+
+        return Math.floor(new Date(`${dm[1]}-${dm[2].padStart(2,'0')}-${dm[3].padStart(2,'0')}T00:00:00Z`).getTime() / 1000);
+
+      }
+
+      return parseInt(str) || 0;
+
+    }
+
+    const upload = parseBytes(values[0]);
+
+    const download = parseBytes(values[1]);
+
+    const total = parseBytes(values[2]);
+
+    const expire = parseExpire(values[3]);
+
+    const header = `upload=${upload}; download=${download}; total=${total}; expire=${expire}`;
+
+    const templates = await getFlowTemplates(uid, env);
+
+    templates.push({ name, header });
+
+    await saveFlowTemplates(uid, env, templates);
+
+    u._flowHeader = header;
+
+    u._flowName = name;
+
+    // \u663E\u793A\u89E3\u6790\u7ED3\u679C
+
+    const dlGB = (download / 1073741824).toFixed(1);
+
+    const totalGB = (total / 1073741824).toFixed(1);
+
+    const expireStr = expire === 0 ? '\u957F\u671F\u6709\u6548' : new Date(expire * 1000).toISOString().slice(0, 10);
+
+    return replyMsg(env, uid, cid, `\u2705 \u5DF2\u6DFB\u52A0\u6A21\u677F: ${name}\n\n\u{1F4CA} \u4E0A\u4F20: ${(upload/1048576).toFixed(1)}MB\n\u{1F4E5} \u4E0B\u8F7D: ${dlGB}GB\n\u{1F4CA} \u603B\u91CF: ${totalGB}GB\n\u{1F4C5} \u5230\u671F: ${expireStr}`, { inline_keyboard: [[{ text: '\u2190 \u8FD4\u56DE', callback_data: 'flow_menu' }]] });
+
+  }
+
   // 获取输入内容
 
   let content = '';
@@ -2655,18 +3329,25 @@ async function onMsg(msg, env) {
 
     // 非收集模式 → 提示使用收集器，不下载文件
 
-    if (!u._collectMode) {
-
+    if (!await getCollectModeSync(uid, u, env)) {
+      // 非收集模式 → 下载文件并弹确认框
+      const f = await tg('getFile', env.BOT_TOKEN, { file_id: msg.document.file_id });
+      if (!f.ok) return;
+      const r = await fetch('https://api.telegram.org/file/bot' + env.BOT_TOKEN + '/' + f.result.file_path);
+      const fileContent = await r.text();
+      if (!fileContent || fileContent.length < 10) {
+        return tg('sendMessage', env.BOT_TOKEN, { chat_id: cid, text: '❌ 文件内容为空或太小', reply_markup: mainKb() });
+      }
+      u._pendingContent = fileContent;
+      u._pendingFileName = msg.document?.file_name || '文件';
       return tg('sendMessage', env.BOT_TOKEN, {
-
         chat_id: cid,
-
-        text: '\u{1F4C4} 收到文件\n\n请使用主页的「订阅」按钮导入文件',
-
-        reply_markup: mainKb(),
-
+        text: '📁 <b>收到文件</b>\n\n📄 ' + escapeHTML(u._pendingFileName) + ' · ' + (fileContent.length / 1024).toFixed(1) + ' KB\n\n是否转为短链？',
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [
+          [{ text: '✅ 转短链', callback_data: 'shortlink_confirm:yes' }, { text: '❌ 取消', callback_data: 'shortlink_confirm:no' }],
+        ] },
       });
-
     }
 
     // 收集模式 → 下载文件
@@ -2701,52 +3382,34 @@ async function onMsg(msg, env) {
 
   if (!content) return;
 
-  // 收集模式（本地订阅/远程订阅）
-
-  if (u._collectMode) {
-
-    if (!u._collected) u._collected = [];
+  // 收集模式（本地订阅/远程订阅）— KV 持久化 + 容错
+  if (await getCollectModeSync(uid, u, env)) {
+    // 内存优先，KV 兜底：避免每次文件都读 KV（429 限流）
+    if (!u._collected) u._collected = await getCollected(uid, env);
+    const items = u._collected;
 
     if (u._collectMode === 'file') {
-
-      u._collected.push({ name: msg.document?.file_name || '', size: msg.document?.file_size || content.length, content });
-
+      items.push({ name: msg.document?.file_name || '', size: msg.document?.file_size || content.length, content });
     } else if (u._collectMode === 'url' && msg.text) {
-
       const urls = msg.text.trim().split(/[\s,;\n]+/).filter(s => /^https?:\/\//i.test(s));
-
-      for (const url of urls) {
-
-        u._collected.push({ url, content: '', size: 0 });
-
-      }
-
+      for (const url of urls) items.push({ url, content: '', size: 0 });
       if (urls.length === 0) return;
-
     } else {
-
       return;
-
     }
 
+    // 异步写 KV（不阻塞，429 容错）
+    saveCollected(uid, items, env).catch(() => {});
+
     const targetCid = u.promptCid || cid;
-
-    const colMsg = collectionText({ items: u._collected, mode: u._collectMode });
-
+    const colMsg = collectionText({ items, mode: u._collectMode });
     await tg('editMessageText', env.BOT_TOKEN, {
-
       chat_id: targetCid, message_id: u.promptMid, text: colMsg, parse_mode: 'HTML',
-
-      reply_markup: collectionKb(u._collected.length > 0),
-
+      reply_markup: collectionKb(items.length > 0),
     }).catch(async () => {
-
-      const sent = await tg('sendMessage', env.BOT_TOKEN, { chat_id: cid, text: colMsg, parse_mode: 'HTML', reply_markup: collectionKb(u._collected.length > 0) });
-
+      const sent = await tg('sendMessage', env.BOT_TOKEN, { chat_id: cid, text: colMsg, parse_mode: 'HTML', reply_markup: collectionKb(items.length > 0) });
       if (sent?.result?.message_id) {
-
         u.promptCid = cid; u.promptMid = sent.result.message_id;
-
       }
 
     });
@@ -2756,56 +3419,22 @@ async function onMsg(msg, env) {
   }
 
   // ===== 非收集模式 =====
-
   return await safeExecute(async () => {
-
-    const ttl = u.ttl !== undefined ? u.ttl : 0;
-
-    // 所有文本 → 直接保存为文本短链，不解析
-
-    const preview = content.length > 50 ? content.slice(0, 50) + '...' : content;
-
-    const { id, url: clipUrl } = await saveToClipAndTrack(content, ttl, env, uid, {
-
-      preview: '\u{1F4C4} ' + preview, nodeCount: 0, source: 'text',
-
-      burn: u?._burn || false,
-
-      landing: u?._landing || false,
-
-    }, getEffectiveMaxAccess(u));
-
-    const previewShow = content.length > 150 ? content.slice(0, 150) + '...' : content;
-
-    const ttlT = formatTtlLabel(ttl);
-
-    const accT = getEffectiveMaxAccess(u) === 0 ? '' : '\n\u{1F4CA} ' + getEffectiveMaxAccess(u) + ' IP';
-
-    u._lastContent = content;
-
-    u._lastRawContent = content;
-
-    u._lastSubInput = content;
-
-    const resultText =
-
-      '\u{1F4E6} <b>\u68C0\u6D4B\u5230\u6587\u672C\u8F93\u5165</b>\n\n' +
-
-      '\u{1F517} \u5DF2\u751F\u6210\u77ED\u94FE\uFF1A\n<code>' + clipUrl + '</code>\n\n' +
-
-      '\u{1F4CB} \u9884\u89C8\uFF1A\n<code>' + escapeHTML(previewShow) + '</code>\n\n' +
-
-      '\u23F1 ' + ttlT + accT + '\n\n' +
-
-      '\u{1F4A1} \u5982\u9700\u89E3\u6790\u8BA2\u9605\uFF0C\u8BF7\u4F7F\u7528\u4E3B\u9875\u7684\u300C\u8BA2\u9605\u300D\u6309\u94AE\u5BFC\u5165\u8BA2\u9605\u94FE\u63A5';
-
-    // 编辑主页消息显示结果，编辑失败则发送新消息
-
-    return replyMsg(env, uid, cid, resultText);
-
-  }, env, uid, cid, null, '文本保存');
-
+    // 弹确认框，不直接创建短链
+    u._pendingContent = content;
+    u._pendingFileName = '';
+    const preview = content.length > 100 ? content.slice(0, 100) + '...' : content;
+    return tg('sendMessage', env.BOT_TOKEN, {
+      chat_id: cid,
+      text: '\u{1F4DD} <b>\u6536\u5230\u6587\u672C</b>\n\n<code>' + escapeHTML(preview) + '</code>\n\n\u662F\u5426\u8F6C\u4E3A\u77ED\u94FE\uFF1F',
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [
+        [{ text: '\u2705 \u8F6C\u77ED\u94FE', callback_data: 'shortlink_confirm:yes' }, { text: '\u274C \u53D6\u6D88', callback_data: 'shortlink_confirm:no' }],
+      ] },
+    });
+  }, env, uid, cid, null, '\u6587\u672C\u786E\u8BA4');
 }
+
 
 // ==================== 回调处理 ====================
 
@@ -2832,6 +3461,7 @@ async function onCb(q, env) {
   // === dispatch ===
 
   if (d === 'menu') return cb_menu(env, uid, cid, mid, u, d, q);
+  if (d.startsWith('shortlink_confirm:')) return cb_shortlink_confirm(env, uid, cid, mid, u, d, q);
 
   if (d === 'input_url') return cb_input_url(env, uid, cid, mid, u, d, q);
 
@@ -2850,6 +3480,7 @@ async function onCb(q, env) {
   if (d === 'ua_add') return cb_ua_add(env, uid, cid, mid, u, d, q);
 
   if (d.startsWith('my_links_')) return cb_my_links(env, uid, cid, mid, u, d, q);
+  if (d === 'kv_usage') return cb_kv_usage(env, uid, cid, mid, u, d, q);
     if (d === 'changelog') return cb_changelog(env, uid, cid, mid, u, d, q);
 
   if (d.startsWith('link_')) return cb_link(env, uid, cid, mid, u, d, q);
@@ -2882,6 +3513,26 @@ async function onCb(q, env) {
 
   }
 
+  if (d.startsWith('mod_shortcode_')) {
+
+    const linkId = d.replace('mod_shortcode_', '');
+
+    u.state = 'SHORTCODE_' + linkId;
+
+    u.promptCid = cid;
+
+    u.promptMid = mid;
+
+    return editMsg(env, cid, mid,
+
+      '\u270F <b>\u4FEE\u6539\u77ED\u7801</b>\n\n\u5F53\u524D\u77ED\u7801: <code>' + linkId + '</code>\n\n\u53D1\u9001\u65B0\u77ED\u7801\uFF08\u53EA\u5141\u8BB8\u5B57\u6BCD\u3001\u6570\u5B57\u3001\u77ED\u6A2A\u7EBF\uFF0C3-20\u5B57\u7B26\uFF09\uFF0C\u6216\u53D1\u9001 /cancel \u53D6\u6D88\u3002',
+
+      { inline_keyboard: [[{ text: '\u2716 \u53D6\u6D88', callback_data: 'link_' + linkId }]] },
+
+    );
+
+  }
+
   if (d.startsWith('mod_acc_')) return cb_mod_acc(env, uid, cid, mid, u, d, q);
 
   if (d.startsWith('chg_acc_')) return cb_chg_acc(env, uid, cid, mid, u, d, q);
@@ -2900,9 +3551,14 @@ async function onCb(q, env) {
 
   if (d === 'conv_toggle_landing') return cb_conv_toggle_landing(env, uid, cid, mid, u, d, q);
 
+
+  if (d.startsWith('flow_pick:')) return cb_flow_pick(env, uid, cid, mid, u, d, q);
+
+
   if (d === 'conv_back') return cb_conv_back(env, uid, cid, mid, u, d, q);
 
   if (d === 'conv_limit_menu') return cb_conv_limit_menu(env, uid, cid, mid, u, d, q);
+  if (d === 'conv_flow_menu') return cb_conv_flow_menu(env, uid, cid, mid, u, d, q);
 
   if (d === 'conv_ttl_menu') return cb_conv_ttl_menu(env, uid, cid, mid, u, d, q);
 
@@ -2928,6 +3584,16 @@ async function onCb(q, env) {
 
   }
 
+  if (d === 'yaml_menu') return cb_yaml_menu(env, uid, cid, mid, u, d, q);
+
+  if (d === 'flow_menu') return cb_flow_menu(env, uid, cid, mid, u, d, q);
+
+  if (d === 'flow_edit') return cb_flow_edit(env, uid, cid, mid, u, d, q);
+
+  if (d.startsWith('flow_select:')) return cb_flow_select(env, uid, cid, mid, u, d, q);
+
+  if (d.startsWith('flow_del:')) return cb_flow_del(env, uid, cid, mid, u, d, q);
+
   if (d.startsWith('conv_fmt:')) return cb_conv_fmt(env, uid, cid, mid, u, d, q);
 
 }
@@ -2940,13 +3606,14 @@ async function cb_menu(env, uid, cid, mid, u, d, q) {
 
   // 返回主页 → 清理所有收集/临时状态
 
+  await clearCollected(uid, env);
   u._collected = null;
 
-  u._collectMode = null;
+  await setCollectMode(uid, u, null, env);
 
   u._fmtMsg = null; u._lastProxies = null; u._lastSubInput = null;
 
-  u._isGost = null; u._gostInput = null; u._gostCount = null; u._lastStats = null; u._lastFetchUa = null;
+  u._isGost = null; u._gostInput = null; u._gostCount = null; u._lastStats = null; u._lastFetchUa = null; u._lastSubInfo = null;
 
   return tg('editMessageText', env.BOT_TOKEN, {
 
@@ -2964,15 +3631,51 @@ async function cb_menu(env, uid, cid, mid, u, d, q) {
 
     }, env, uid, cid, mid, '格式转换');}
 
+// ==================== 非收集模式 → 确认转短链 ====================
+
+async function cb_shortlink_confirm(env, uid, cid, mid, u, d, q) {
+  const parts = d.split(':');
+  const type = parts[1]; // file, text, link
+  const content = u._pendingContent || '';
+  const fileName = u._pendingFileName || '';
+
+  if (type === 'yes') {
+    // 确认创建短链
+    const ttl = u._convTtl || 0;
+    const { id, url: clipUrl } = await saveToClipAndTrack(content, ttl, env, uid, {}, 0);
+    
+    // 获取用户链接数
+    const links = await getUserLinks(uid, env);
+    
+    const text = '✅ <b>短链已创建</b>\n\n' +
+      '🔗 <code>' + clipUrl + '</code>\n\n' +
+      '📄 ' + (fileName || '内容') + ' · ' + (content.length / 1024).toFixed(1) + ' KB\n' +
+      '📊 我的短链: ' + links.length + ' 条';
+    
+    u._pendingContent = null;
+    u._pendingFileName = null;
+
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid, message_id: mid, text, parse_mode: 'HTML',
+      reply_markup: resultKb(clipUrl),
+    });
+  } else {
+    // 取消
+    u._pendingContent = null;
+    u._pendingFileName = null;
+    return cb_menu(env, uid, cid, mid, u, d, q);
+  }
+}
+
 async function cb_input_url(env, uid, cid, mid, u, d, q) {
 
-  u._collectMode = 'url';
+  await setCollectMode(uid, u, 'url', env);
 
     u.promptCid = cid;
 
     u.promptMid = mid;
 
-    u._collected = [];
+    await saveCollected(uid, [], env);
 
     return tg('editMessageText', env.BOT_TOKEN, {
 
@@ -2986,13 +3689,14 @@ async function cb_input_url(env, uid, cid, mid, u, d, q) {
 
 async function cb_input_file(env, uid, cid, mid, u, d, q) {
 
-  u._collectMode = 'file';
+  await setCollectMode(uid, u, 'file', env);
 
     u.promptCid = cid;
 
+  u._collected = [];
     u.promptMid = mid;
 
-    u._collected = []; // 重置内存收集
+    await saveCollected(uid, [], env); // 重置内存收集
 
     return tg('editMessageText', env.BOT_TOKEN, {
 
@@ -3008,13 +3712,14 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
 
   return await safeExecute(async () => {
 
-    const mode = u._collectMode;
+    const mode = await getCollectModeSync(uid, u, env);
 
-    const items = u._collected || [];
+    const items = await getCollected(uid, env);
 
-    u._collectMode = null;
+    await setCollectMode(uid, u, null, env);
 
-    u._collected = null;
+  u._collected = null;
+    await clearCollected(uid, env);
 
     if (items.length === 0) {
 
@@ -3318,7 +4023,18 @@ async function cb_changelog(env, uid, cid, mid, u, d, q) {
     header = '⚠️ 版本有更新，请移步仓库手动更新\n\n';
     kb.unshift([{ text: '📦 前往仓库', url: REPO_PAGE }]);
   }
-  const text = header + '📋 <b>更新日志</b>\n\n' + changelog.substring(0, 3000);
+  // 只截取最新版本的内容
+  let latestChangelog = changelog;
+  const sections = changelog.split(/^## /m);
+  if (sections.length > 2) {
+    // sections[0] 是空的或头部，sections[1] 是最新版本
+    latestChangelog = '## ' + sections[1].trim();
+  }
+  // 截断到 1500 字符
+  if (latestChangelog.length > 1500) {
+    latestChangelog = latestChangelog.substring(0, 1500) + '\n\n...';
+  }
+  const text = header + '📋 <b>更新日志</b>\n\n' + latestChangelog;
   return tg('editMessageText', env.BOT_TOKEN, {
     chat_id: cid, message_id: mid, text, parse_mode: 'HTML',
     reply_markup: { inline_keyboard: kb },
@@ -3391,7 +4107,8 @@ async function cb_my_links(env, uid, cid, mid, u, d, q) {
 
     if (navRow.length) rows.push(navRow);
 
-    rows.push([{ text: '\u{1F4DD} \u66F4\u65B0\u65E5\u5FD7', callback_data: 'changelog' }, { text: '\u2190 \u8FD4\u56DE', callback_data: 'menu' }]);
+    rows.push([{ text: '\u{1F4DD} 更新日志', callback_data: 'changelog' }, { text: '\u{1F4CA} KV', callback_data: 'kv_usage' }]);
+    rows.push([{ text: '\u{1F519} 返回', callback_data: 'menu' }]);
 
     return tg('editMessageText', env.BOT_TOKEN, {
 
@@ -3407,6 +4124,63 @@ async function cb_my_links(env, uid, cid, mid, u, d, q) {
 
     });
 
+}
+
+async function cb_kv_usage(env, uid, cid, mid, u, d, q) {
+  try {
+    // 获取用户链接
+    const links = await getUserLinks(uid, env);
+    let shareSize = 0;
+    let shareCount = 0;
+    for (const l of links) {
+      const val = await env.KV.get('share_' + l.id);
+      if (val) { shareSize += val.length; shareCount++; }
+    }
+    
+    // 获取用户配置
+    const cfgKeys = ['cfgu:' + uid, 'ua:' + uid, 'ulinks:' + uid];
+    let cfgSize = 0;
+    let cfgList = [];
+    for (const k of cfgKeys) {
+      const val = await env.KV.get(k);
+      if (val) {
+        cfgSize += val.length;
+        const name = k.split(':')[0];
+        const labels = { cfgu: '用户配置', ua: 'UA 列表', ulinks: '链接索引' };
+        cfgList.push(labels[name] || name + ': ' + (val.length / 1024).toFixed(1) + ' KB');
+      }
+    }
+    
+    // 获取模板缓存
+    const tmplCache = await env.KV.get('tmpl_repo_cache');
+    let tmplSize = 0;
+    if (tmplCache) tmplSize = tmplCache.length;
+    
+    const totalSize = shareSize + cfgSize + tmplSize;
+    
+    const text = '\u{1F4CA} <b>KV 存储用量</b>\n\n' +
+      '\u2022 短链 (share_): ' + shareCount + ' 条 \u00B7 ' + (shareSize / 1024).toFixed(1) + ' KB\n' +
+      '\u2022 用户配置: ' + cfgList.join(', ') + '\u00B7 ' + (cfgSize / 1024).toFixed(1) + ' KB\n' +
+      '\u2022 模板缓存: ' + (tmplSize > 0 ? (tmplSize / 1024).toFixed(1) + ' KB' : '无') + '\n\n' +
+      '\u2022 总占用: ' + (totalSize / 1024).toFixed(1) + ' KB\n' +
+      '\u2022 KV 限额: 1 GB\n' +
+      '\u2022 使用率: ' + (totalSize / 1024 / 1024 / 1024 * 100).toFixed(3) + '%';
+    
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [[{ text: '\u2190 返回', callback_data: 'my_links_0' }]] },
+    });
+  } catch (e) {
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid,
+      message_id: mid,
+      text: '\u274C 获取失败: ' + e.message,
+      reply_markup: { inline_keyboard: [[{ text: '\u2190 返回', callback_data: 'my_links_0' }]] },
+    });
+  }
 }
 
 async function cb_link(env, uid, cid, mid, u, d, q) {
@@ -3549,7 +4323,13 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
 
       [
 
+        { text: '\u270F \u4FEE\u6539\u77ED\u7801', callback_data: 'mod_shortcode_' + l.id },
+
         { text: '\u{1F5D1} \u5220\u9664\u77ED\u94FE', callback_data: 'del_confirm_' + l.id },
+
+      ],
+
+      [
 
         { text: '\u2190 \u8FD4\u56DE\u5217\u8868', callback_data: 'my_links_0' },
 
@@ -3715,9 +4495,11 @@ async function cb_chg_ttl(env, uid, cid, mid, u, d, q) {
 
       text += linkStatusIcon(l) + ' <b>' + escapeHTML(l.preview) + '</b>\n';
 
-      text += '\u{1F4CA} ' + (l.nodeCount || 0) + ' \u8282\u70B9  \u00B7 ' + (l.ttl === 0 ? '\u{1F535} \u6C38\u4E45\u6709\u6548' : (l.expiresAt && Date.now() > l.expiresAt ? '\u26AB \u5DF2\u8FC7\u671F' : formatRemaining(l.expiresAt))) + '\n\n';
+      text += '\u{1F4CA} ' + (l.nodeCount || 0) + ' \u8282\u70B9  \u00B7 ' + (l.ttl === 0 ? '\u{1F535} \u6C38\u4E45\u6709\u6548' : (l.expiresAt && Date.now() > l.expiresAt ? '\u26AB \u5DF2\u8FC7\u671F' : formatRemaining(l.expiresAt))) + '\n';
 
-      text += '\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
+      if (l.flowName) text += '\u{1F310} \u6B64\u94FE\u4FE1\u606F: ' + escapeHTML(l.flowName) + '\n';
+
+      text += '\n\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
 
       const shareUrl = 'https://t.me/share/url?url=' + encodeURIComponent(clipUrl);
 
@@ -3839,9 +4621,11 @@ async function cb_chg_acc(env, uid, cid, mid, u, d, q) {
 
       text += linkStatusIcon(l) + ' <b>' + escapeHTML(l.preview) + '</b>\n';
 
-      text += '\u{1F4CA} ' + (l.nodeCount || 0) + ' \u8282\u70B9  \u00B7 ' + (l.ttl === 0 ? '\u{1F535} \u6C38\u4E45\u6709\u6548' : (l.expiresAt && Date.now() > l.expiresAt ? '\u26AB \u5DF2\u8FC7\u671F' : formatRemaining(l.expiresAt))) + '\n\n';
+      text += '\u{1F4CA} ' + (l.nodeCount || 0) + ' \u8282\u70B9  \u00B7 ' + (l.ttl === 0 ? '\u{1F535} \u6C38\u4E45\u6709\u6548' : (l.expiresAt && Date.now() > l.expiresAt ? '\u26AB \u5DF2\u8FC7\u671F' : formatRemaining(l.expiresAt))) + '\n';
 
-      text += '\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
+      if (l.flowName) text += '\u{1F310} \u6B64\u94FE\u4FE1\u606F: ' + escapeHTML(l.flowName) + '\n';
+
+      text += '\n\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
 
       const shareUrl = 'https://t.me/share/url?url=' + encodeURIComponent(clipUrl);
 
@@ -3873,9 +4657,9 @@ async function cb_chg_acc(env, uid, cid, mid, u, d, q) {
 
 async function cb_limit_menu(env, uid, cid, mid, u, d, q) {
 
-  const defTtl = u.ttl !== undefined ? u.ttl : 0;
+  const defTtl = u.ttl != null ? u.ttl : 0;
 
-    const defAcc = u._accessLimit !== undefined ? u._accessLimit : 0;
+    const defAcc = u._accessLimit != null ? u._accessLimit : 0;
 
     const ttlLabel = formatTtlLabel(defTtl);
 
@@ -3959,7 +4743,7 @@ async function cb_ttl_set(env, uid, cid, mid, u, d, q) {
 
 async function cb_acc_menu(env, uid, cid, mid, u, d, q) {
 
-  const curAcc = u._accessLimit !== undefined ? u._accessLimit : 0;
+  const curAcc = u._accessLimit != null ? u._accessLimit : 0;
 
     return tg('editMessageText', env.BOT_TOKEN, {
 
@@ -4025,6 +4809,77 @@ async function cb_conv_toggle_landing(env, uid, cid, mid, u, d, q) {
 
 }
 
+async function cb_conv_flow_menu(env, uid, cid, mid, u, d, q) {
+  // 从本次时限菜单进入的流量信息模板选择
+  const templates = await getFlowTemplates(uid, env);
+  if (templates.length === 0) {
+    return tg('answerCallbackQuery', env.BOT_TOKEN, { callback_query_id: q.id, text: '\u26A0\uFE0F \u8BF7\u5148\u5728 \u4E3B\u9875 \u2192 \u6A21\u677F\u7BA1\u7406 \u2192 \u6D41\u91CF\u4FE1\u606F \u6DFB\u52A0\u6A21\u677F', show_alert: true });
+  }
+  const lines = ['\u{1F310} <b>\u9009\u62E9\u6D41\u91CF\u4FE1\u606F\u6A21\u677F</b>', ''];
+  for (let i = 0; i < templates.length; i++) {
+    const t = templates[i];
+    const isActive = (u._convFlowName || u._flowName) === t.name;
+    lines.push((isActive ? '\u25CF ' : '\u25CB ') + t.name);
+  }
+  lines.push('', '\u9009\u62E9\u540E\u5C06\u9644\u52A0\u5230\u77ED\u94FE\u8F93\u51FA');
+  const rows = [];
+  for (let i = 0; i < templates.length; i++) {
+    rows.push([{ text: templates[i].name, callback_data: 'flow_pick:' + i }]);
+  }
+  rows.push([{ text: '\u274C \u4E0D\u4F7F\u7528', callback_data: 'flow_pick:none' }]);
+  rows.push([{ text: '\u2190 \u8FD4\u56DE', callback_data: 'conv_back' }]);
+  return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text: lines.join('\n'), parse_mode: 'HTML', reply_markup: { inline_keyboard: rows } });
+}
+
+async function cb_flow_pick(env, uid, cid, mid, u, d, q) {
+  const val = d.split(':')[1];
+  const templates = await getFlowTemplates(uid, env);
+
+  // 返回本次时限菜单（从 conv_flow_menu 进入时）
+  const goBack = () => {
+    const effConvTtl = u._convTtl != null ? u._convTtl : (u.ttl != null ? u.ttl : 0);
+    const ttlLabel = formatTtlLabel(effConvTtl);
+    const effConvAcc = u._convAccessLimit != null ? u._convAccessLimit : (u._accessLimit != null ? u._accessLimit : 0);
+    const accLabel = effConvAcc === 0 ? '\u4E0D\u9650' : effConvAcc + ' IP';
+    const effFlowName = u._convFlowName || u._flowName || null;
+    const flowLabel = effFlowName ? '\u2705 ' + effFlowName : '\u274C \u4E0D\u4F7F\u7528';
+    return tg('editMessageText', env.BOT_TOKEN, {
+      chat_id: cid, message_id: mid,
+      text: '\u23F1 <b>\u672C\u6B21\u65F6\u9650</b>\n\n\u2022 \u23F1 \u6642\u6548: ' + ttlLabel + '\n\u2022 \u{1F4CA} \u6B21\u6570: ' + accLabel + '\n\u2022 \u{1F310} \u6B64\u94FE\u4FE1\u606F: ' + flowLabel + '\n\n\u4EC5\u5F71\u54CD\u672C\u6B21\u8F6C\u6362\uFF0C\u4E0D\u4F1A\u6539\u53D8\u4E3B\u9875\u7684\u9ED8\u8BA4\u503C\u3002',
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '\u23F1 \u672C\u6B21\u6642\u6548', callback_data: 'conv_ttl_menu' }],
+          [{ text: '\u{1F4CA} \u672C\u6B21\u6B21\u6570', callback_data: 'conv_acc_menu' }],
+          [{ text: '\u{1F310} \u6B64\u94FE\u4FE1\u606F', callback_data: 'conv_flow_menu' }],
+          [{ text: '\u2190 \u8FD4\u56DE', callback_data: 'conv_back' }],
+        ],
+      },
+    });
+  };
+
+  if (val === 'none') {
+    u._convFlowHeader = null;
+    u._convFlowName = null;
+    await tg('answerCallbackQuery', env.BOT_TOKEN, { callback_query_id: q.id, text: '\u274C \u5DF2\u53D6\u6D88\u6B64\u94FE\u4FE1\u606F' });
+    return goBack();
+  }
+
+  const idx = parseInt(val);
+  if (idx >= 0 && idx < templates.length) {
+    u._convFlowHeader = templates[idx].header;
+    u._convFlowName = templates[idx].name;
+    await tg('answerCallbackQuery', env.BOT_TOKEN, { callback_query_id: q.id, text: '\u2705 \u5DF2\u8BBE\u7F6E: ' + templates[idx].name });
+    return goBack();
+  }
+
+  return tg('editMessageReplyMarkup', env.BOT_TOKEN, {
+    chat_id: cid, message_id: mid,
+    reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
+  });
+}
+
+
 async function cb_conv_back(env, uid, cid, mid, u, d, q) {
 
     return tg('editMessageText', env.BOT_TOKEN, {
@@ -4044,7 +4899,6 @@ async function cb_conv_back(env, uid, cid, mid, u, d, q) {
 }
 
 async function cb_conv_limit_menu(env, uid, cid, mid, u, d, q) {
-
   const effConvTtl = u._convTtl !== undefined ? u._convTtl : (u.ttl || 0);
 
     const ttlLabel = formatTtlLabel(effConvTtl);
@@ -4053,13 +4907,17 @@ async function cb_conv_limit_menu(env, uid, cid, mid, u, d, q) {
 
     const accLabel = effConvAcc === 0 ? '\u4E0D\u9650' : effConvAcc + ' IP';
 
+    const effFlowName = u._convFlowName || u._flowName || null;
+
+    const flowLabel = effFlowName ? '\u2705 ' + effFlowName : '\u274C \u4E0D\u4F7F\u7528';
+
     return tg('editMessageText', env.BOT_TOKEN, {
 
       chat_id: cid,
 
       message_id: mid,
 
-      text: '\u23F1 <b>\u672C\u6B21\u65F6\u9650</b>\n\n\u2022 \u23F1 \u6642\u6548: ' + ttlLabel + '\n\u2022 \u{1F4CA} \u6B21\u6570: ' + accLabel + '\n\n\u4EC5\u5F71\u54CD\u672C\u6B21\u8F6C\u6362\uFF0C\u4E0D\u4F1A\u6539\u53D8\u4E3B\u9875\u7684\u9ED8\u8BA4\u503C\u3002',
+      text: '\u23F1 <b>\u672C\u6B21\u65F6\u9650</b>\n\n\u2022 \u23F1 \u6642\u6548: ' + ttlLabel + '\n\u2022 \u{1F4CA} \u6B21\u6570: ' + accLabel + '\n\u2022 \u{1F310} \u6B64\u94FE\u4FE1\u606F: ' + flowLabel + '\n\n\u4EC5\u5F71\u54CD\u672C\u6B21\u8F6C\u6362\uFF0C\u4E0D\u4F1A\u6539\u53D8\u4E3B\u9875\u7684\u9ED8\u8BA4\u503C\u3002',
 
       parse_mode: 'HTML',
 
@@ -4070,6 +4928,8 @@ async function cb_conv_limit_menu(env, uid, cid, mid, u, d, q) {
           [{ text: '\u23F1 \u672C\u6B21\u6642\u6548', callback_data: 'conv_ttl_menu' }],
 
           [{ text: '\u{1F4CA} \u672C\u6B21\u6B21\u6570', callback_data: 'conv_acc_menu' }],
+
+          [{ text: '\u{1F310} \u6B64\u94FE\u4FE1\u606F', callback_data: 'conv_flow_menu' }],
 
           [{ text: '\u2190 \u8FD4\u56DE', callback_data: 'conv_back' }],
 
@@ -4093,7 +4953,7 @@ async function cb_conv_ttl_menu(env, uid, cid, mid, u, d, q) {
 
       parse_mode: 'HTML',
 
-      reply_markup: ttlKb(u._convTtl !== undefined ? u._convTtl : (u.ttl || 0), 'conv_ttl_set:', 'conv_limit_menu'),
+      reply_markup: ttlKb(u._convTtl != null ? u._convTtl : (u.ttl != null ? u.ttl : 0), 'conv_ttl_set:', 'conv_limit_menu'),
 
     });
 
@@ -4188,6 +5048,8 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
           burn: u?._burn || false,
 
           landing: u?._landing || false,
+          flowHeader: u._convFlowHeader || u._flowHeader || null,
+          flowName: u._convFlowName || u._flowName || null,
 
         }, getEffectiveMaxAccess(u));
 
@@ -4197,7 +5059,13 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
         const effAcc = getEffectiveMaxAccess(u);
 
+        const gostFlowName = u._convFlowName || u._flowName;
+
         u._convTtl = null;
+
+        u._convFlowHeader = null;
+
+        u._convFlowName = null;
 
         env.KV.delete('collect:' + uid).catch(() => {});
 
@@ -4206,6 +5074,8 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
         const ttlT = formatTtlLabel(effTtl);
 
         const accT = effAcc === 0 ? '' : '\n\u{1F4CA} ' + effAcc + ' IP';
+
+        const gostFlowT = gostFlowName ? '\n\u{1F310} \u6B64\u94FE\u4FE1\u606F: ' + gostFlowName : '';
 
         await tg('editMessageText', env.BOT_TOKEN, {
 
@@ -4221,7 +5091,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
             '\u{1F517} <code>' + clipUrl + '</code>\n\n' +
 
-            '\u23F1 ' + ttlT + accT,
+            '\u23F1 ' + ttlT + accT + gostFlowT,
 
           parse_mode: 'HTML',
 
@@ -4335,7 +5205,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
       output = 'proxies:\n' + proxiesForConvert.map(p => {
 
-        const order = ['name','type','server','port','password','uuid','cipher','network','tls','sni','skip-cert-verify','flow','udp','alpn','client-fingerprint','servername','grpc-opts','ws-opts','reality-opts'];
+        const order = ['name','type','server','port','password','uuid','alterId','cipher','network','tls','sni','servername','skip-cert-verify','flow','udp','udp-over-tcp','udp-relay-mode','ip-version','tfo','alpn','client-fingerprint','fingerprint','plugin','plugin-opts','psk','version','obfs','username','dialer-proxy','smux','reality','encryption','reality-opts','grpc-opts','ws-opts','http-opts','h2-opts','mkcp-opts','mekya-opts','obfs-opts','vless-opts','trojan-opts','shadowsocks-opts','xhttp-opts','ech-opts','restls-opts','shadow-tls-opts','jls-opts'];
 
         const seen = new Set();
 
@@ -4347,7 +5217,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
           if (isFirst) { lines.push('  - ' + k + ': ' + v); isFirst = false; }
 
-          else lines.push(' '.repeat(indent) + k + ': ' + v);
+          else lines.push(' '.repeat(indent) + k + (v === '' ? ':' : ': ' + v));
 
         };
 
@@ -4371,60 +5241,87 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
             else wl(4, k, v);
 
-          } else if (typeof v === 'object') {
-
+          } else if (Array.isArray(v)) {
+            if (v.length === 0) continue;
             wl(4, k, '');
-
-            for (const [sk, sv] of Object.entries(v)) {
-
-              if (sv === undefined || sv === null) continue;
-
-              if (typeof sv === 'object' && !Array.isArray(sv)) {
-
-                lines.push('      ' + sk + ':');
-
-                for (const [tk, tv] of Object.entries(sv)) {
-
-                  if (tv !== undefined && tv !== null) {
-
-                    const nq = typeof tv === 'string' && (tv.includes(':') || tv.includes('#') || tv.includes('"') || tv.includes(' '));
-
-                    lines.push('        ' + tk + ': ' + (nq ? '"' + tv.replace(/"/g,'\\"') + '"' : String(tv)));
-
-                  }
-
-                }
-
-              } else {
-
-                const nq = typeof sv === 'string' && (sv.includes(':') || sv.includes('#'));
-
-                lines.push('      ' + sk + ': ' + (nq ? '"' + sv.replace(/"/g,'\\"') + '"' : String(sv)));
-
-              }
-
+            for (const item of v) {
+              const nq = typeof item === 'string' && (item.includes(':') || item.includes('#'));
+              lines.push('      - ' + (nq ? '"' + item.replace(/"/g,'\\"') + '"' : String(item)));
             }
-
+          } else if (typeof v === 'object') {
+            wl(4, k, '');
+            for (const [sk, sv] of Object.entries(v)) {
+              if (sv === undefined || sv === null) continue;
+              if (Array.isArray(sv)) {
+                lines.push('      ' + sk + ':');
+                for (const item of sv) {
+                  const nq = typeof item === 'string' && (item.includes(':') || item.includes('#'));
+                  lines.push('        - ' + (nq ? '"' + item.replace(/"/g,'\\"') + '"' : String(item)));
+                }
+              } else if (typeof sv === 'object') {
+                lines.push('      ' + sk + ':');
+                for (const [tk, tv] of Object.entries(sv)) {
+                  if (tv !== undefined && tv !== null) {
+                    const nq = typeof tv === 'string' && (tv.includes(':') || tv.includes('#') || tv.includes('"') || tv.includes(' '));
+                    lines.push('        ' + tk + ': ' + (nq ? '"' + tv.replace(/"/g,'\\"') + '"' : String(tv)));
+                  }
+                }
+              } else {
+                const nq = typeof sv === 'string' && (sv.includes(':') || sv.includes('#'));
+                lines.push('      ' + sk + ': ' + (nq ? '"' + sv.replace(/"/g,'\\"') + '"' : String(sv)));
+              }
+            }
           }
 
         }
 
         // 有序字段中没出现的其他字段
-
+        const nestedChildKeys = new Set(['mode','host','path','headers','max-early-data','early-data-header-name','v2ray-http-upgrade','v2ray-http-upgrade-fast-open','grpc-service-name','grpc-user-agent','ping-interval','max-connections','min-streams','max-streams','padding','statistic','only-tcp','method','tls','fingerprint','certificate','private-key','skip-cert-verify','name-cert-verify','mux','ech','password','version','version-hint','restls-script','alpn','host','username','primary-key','explicit-nonce-ciphersuites','defer-instance-derived-write-time','transport-layer-padding','connection-enrolment','sequence-watermarking-enabled','embedded-traffic-generator','steps','url','max-write-delay','max-request-size','polling-interval-initial','h2-pool-size','mtu','tti','uplink-capacity','downlink-capacity','congestion','write-buffer','read-buffer','seed','header','key','crypt','mode','conn','autoexpire','scavengettl','ratelimit','sndwnd','rcvwnd','datashard','parityshard','dscp','nocomp','acknodelay','nodelay','interval','resend','sockbuf','smuxver','smuxbuf','framesize','streambuf','keepalive']);
+        const anyNestedOpts = p['plugin-opts'] || p['ws-opts'] || p['http-opts'] || p['h2-opts'] || p['obfs-opts'] || p['grpc-opts'] || p['reality-opts'] || p['vless-opts'] || p['trojan-opts'] || p['shadowsocks-opts'] || p['mkcp-opts'] || p['mekya-opts'] || p['xhttp-opts'] || p['ech-opts'] || p['restls-opts'] || p['shadow-tls-opts'] || p['jls-opts'];
         for (const k of Object.keys(p)) {
-
           if (seen.has(k)) continue;
-
           const v = p[k];
-
           if (v === undefined || v === null || k.startsWith('_')) continue;
-
+          if (nestedChildKeys.has(k) && anyNestedOpts) continue;
           if (typeof v === 'boolean') wl(4, k, v);
-
+          else if (typeof v === 'number') wl(4, k, v);
           else if (typeof v === 'string') wl(4, k, '"' + String(v).replace(/"/g,'\\"') + '"');
-
-          else wl(4, k, String(v));
-
+          else if (Array.isArray(v)) {
+            if (v.length === 0) continue;
+            wl(4, k, '');
+            for (const item of v) {
+              const nq = typeof item === 'string' && (item.includes(':') || item.includes('#'));
+              lines.push('      - ' + (nq ? '"' + item.replace(/"/g,'\\"') + '"' : String(item)));
+            }
+          } else if (typeof v === 'object') {
+            wl(4, k, '');
+            for (const [sk, sv] of Object.entries(v)) {
+              if (sv === undefined || sv === null) continue;
+              if (Array.isArray(sv)) {
+                lines.push('      ' + sk + ':');
+                for (const item of sv) {
+                  const nq = typeof item === 'string' && (item.includes(':') || item.includes('#'));
+                  lines.push('        - ' + (nq ? '"' + item.replace(/"/g,'\\"') + '"' : String(item)));
+                }
+              } else if (typeof sv === 'object') {
+                lines.push('      ' + sk + ':');
+                for (const [tk, tv] of Object.entries(sv)) {
+                  if (tv !== undefined && tv !== null) {
+                    const nq = typeof tv === 'string' && (tv.includes(':') || tv.includes('#') || tv.includes('"') || tv.includes(' '));
+                    lines.push('        ' + tk + ': ' + (nq ? '"' + tv.replace(/"/g,'\\"') + '"' : String(tv)));
+                  }
+                }
+              } else {
+                const nq = typeof sv === 'string' && (sv.includes(':') || sv.includes('#'));
+                lines.push('      ' + sk + ': ' + (nq ? '"' + sv.replace(/"/g,'\\"') + '"' : String(sv)));
+              }
+            }
+          }
+          else {
+            const numVal = Number(v);
+            if (!isNaN(numVal) && String(numVal) === String(v)) wl(4, k, numVal);
+            else wl(4, k, '"' + String(v).replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"');
+          }
         }
 
         return lines.join('\n');
@@ -4631,7 +5528,7 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
           if (isFirst) { lines.push('  - ' + k + ': ' + v); isFirst = false; }
 
-          else lines.push(' '.repeat(indent) + k + ': ' + v);
+          else lines.push(' '.repeat(indent) + k + (v === '' ? ':' : ': ' + v));
 
         };
 
@@ -4728,6 +5625,8 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
         burn: u?._burn || false,
 
         landing: u?._landing || false,
+        flowHeader: u._convFlowHeader || u._flowHeader || null,
+        flowName: u._convFlowName || u._flowName || null,
 
       }, getEffectiveMaxAccess(u));
 
@@ -4752,6 +5651,8 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
           burn: u?._burn || false,
 
           landing: u?._landing || false,
+          flowHeader: u._convFlowHeader || u._flowHeader || null,
+          flowName: u._convFlowName || u._flowName || null,
 
         }, getEffectiveMaxAccess(u));
 
@@ -4770,6 +5671,8 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
           burn: u?._burn || false,
 
           landing: u?._landing || false,
+          flowHeader: u._convFlowHeader || u._flowHeader || null,
+          flowName: u._convFlowName || u._flowName || null,
 
         }, getEffectiveMaxAccess(u));
 
@@ -4781,7 +5684,13 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
       const effAcc = getEffectiveMaxAccess(u);
 
+      const resFlowName = u._convFlowName || u._flowName;
+
       u._convTtl = null;
+
+      u._convFlowHeader = null;
+
+      u._convFlowName = null;
 
       env.KV.delete('collect:' + uid).catch(() => {});
 
@@ -4791,11 +5700,13 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
       const accT = effAcc === 0 ? '' : '\n\u{1F4CA} ' + effAcc + ' IP';
 
+      const flowT = resFlowName ? '\n\u{1F310} \u6B64\u94FE\u4FE1\u606F: ' + resFlowName : '';
+
       let resText = '\u2705 <b>\u8F6C\u6362\u5B8C\u6210</b>\n\n\u{1F4CA} ' + u._lastProxies.length + ' \u8282\u70B9 \u2192 <b>' + fmtLabel + '</b>\n\n\u{1F517} <code>' + clipUrl + '</code>\n';
 
       for (const e of extraUrls) resText += '\n' + e.text + '\n<code>' + e.url + '</code>\n';
 
-      resText += '\n\n\u23F1 ' + ttlT + accT;
+      resText += '\n\n\u23F1 ' + ttlT + accT + flowT;
 
       await tg('editMessageText', env.BOT_TOKEN, {
 
@@ -4887,13 +5798,27 @@ async function fetchRepoTemplates(env) {
 
 async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
 
-  // 仓库模板（从 KV 缓存读取）
+  const lines = ['\u{1F4DD} <b>模板管理</b>', '', '选择要管理的模板类型：'];
+
+  const kb = { inline_keyboard: [
+
+    [{ text: '\u{1F4DD} YAML 模板', callback_data: 'yaml_menu' }],
+
+    [{ text: '\u{1F310} 流量信息', callback_data: 'flow_menu' }],
+
+    [{ text: '\u2190 返回', callback_data: 'menu' }],
+
+  ] };
+
+  return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text: lines.join('\n'), parse_mode: 'HTML', reply_markup: kb });
+
+}
+
+async function cb_yaml_menu(env, uid, cid, mid, u, d, q) {
 
   let repoTmpls = [];
 
   try { repoTmpls = JSON.parse(await env.KV.get('tmpl_repo_cache')) || []; } catch {}
-
-  // 兼容旧版：如果没有缓存，用硬编码兜底
 
   let templates = [];
 
@@ -4905,11 +5830,9 @@ async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
 
   const activeIdx = templates.findIndex(t => t.active);
 
-  const lines = ['\u{1F4DD} <b>YAML 模板管理</b>', ''];
+  const lines = ['\u{1F4DD} <b>YAML 模板</b>', ''];
 
   const rows = [];
-
-  // 仓库模板
 
   for (let i = 0; i < repoTmpls.length; i++) {
 
@@ -4949,7 +5872,7 @@ async function cb_tmpl_menu(env, uid, cid, mid, u, d, q) {
 
   lines.push('', '点击切换模板，\u2716 删除用户模板');
 
-  const kb = { inline_keyboard: [...rows, [{ text: '🔄 同步仓库', callback_data: 'tmpl_sync' }, { text: '+ 添加模板', callback_data: 'tmpl_edit' }], [{ text: '\u2190 返回', callback_data: 'menu' }]] };
+  const kb = { inline_keyboard: [...rows, [{ text: '🔄 同步仓库', callback_data: 'tmpl_sync' }, { text: '+ 添加模板', callback_data: 'tmpl_edit' }], [{ text: '\u2190 返回', callback_data: 'tmpl_menu' }]] };
 
   return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text: lines.join('\n'), parse_mode: 'HTML', reply_markup: kb });
 
@@ -4995,7 +5918,7 @@ async function cb_tmpl_select_r(env, uid, cid, mid, u, d, q) {
 
   await env.KV.put('tmpl_repo_active:' + uid, String(idx));
 
-  return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
+  return cb_yaml_menu(env, uid, cid, mid, u, d, q);
 
 }
 
@@ -5015,7 +5938,7 @@ async function cb_tmpl_select_u(env, uid, cid, mid, u, d, q) {
 
   await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
 
-  return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
+  return cb_yaml_menu(env, uid, cid, mid, u, d, q);
 
 }
 
@@ -5031,7 +5954,7 @@ async function cb_tmpl_del(env, uid, cid, mid, u, d, q) {
 
   await env.KV.put('tmpls:' + uid, JSON.stringify(templates));
 
-  return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
+  return cb_yaml_menu(env, uid, cid, mid, u, d, q);
 
 }
 
@@ -5053,7 +5976,7 @@ async function cb_tmpl_sync(env, uid, cid, mid, u, d, q) {
 
   await tg('answerCallbackQuery', env.BOT_TOKEN, { callback_query_id: mid, text: '✅ 已同步 ' + repoTmpls.length + ' 个模板' });
 
-  return cb_tmpl_menu(env, uid, cid, mid, u, d, q);
+  return cb_yaml_menu(env, uid, cid, mid, u, d, q);
 
 }
 
@@ -5078,6 +6001,156 @@ function cleanYamlForTemplate(text) {
   if (ps >= 0) ls.splice(ps + 1, pe - ps - 1);
 
   return ls.join('\n');
+
+}
+
+// ==================== 流量信息模板管理 ====================
+
+async function getFlowTemplates(uid, env) {
+
+  try { return JSON.parse(await env.KV.get('tmpl_flow:' + uid)) || []; } catch { return []; }
+
+}
+
+async function saveFlowTemplates(uid, env, templates) {
+
+  await env.KV.put('tmpl_flow:' + uid, JSON.stringify(templates));
+
+}
+
+async function cb_flow_menu(env, uid, cid, mid, u, d, q) {
+
+  const templates = await getFlowTemplates(uid, env);
+
+  let activeIdx = -1;
+
+  try { activeIdx = await (async () => { const v = parseInt(await env.KV.get('tmpl_flow_active:' + uid)); return isNaN(v) ? -1 : v; })(); } catch {}
+
+  if (activeIdx >= templates.length) activeIdx = -1;
+
+  const lines = ['\u{1F310} <b>流量信息模板</b>', '', '添加自定义流量头信息，导出短链时自动附加。', ''];
+
+  const rows = [];
+
+  // "不使用" 始终是第一个选项
+
+  const noneActive = activeIdx === -1;
+
+  lines.push((noneActive ? '\u25CF' : '\u25CB') + ' 不使用');
+
+  rows.push([{ text: (noneActive ? '\u2705 ' : '') + '不使用', callback_data: 'flow_select:-1' }]);
+
+  for (let i = 0; i < templates.length; i++) {
+
+    const t = templates[i];
+
+    const isActive = activeIdx === i;
+
+    const icon = isActive ? '\u25CF' : '\u25CB';
+
+    lines.push(icon + ' ' + t.name);
+
+    rows.push([
+
+      { text: (isActive ? '\u2705 ' : '') + t.name, callback_data: 'flow_select:' + i },
+
+      { text: '\u2716', callback_data: 'flow_del:' + i },
+
+    ]);
+
+  }
+
+  lines.push('', '格式: upload=X; download=Y; total=Z; expire=T');
+
+  const kb = { inline_keyboard: [...rows, [{ text: '+ 添加模板', callback_data: 'flow_edit' }], [{ text: '\u2190 返回', callback_data: 'tmpl_menu' }]] };
+
+  return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text: lines.join('\n'), parse_mode: 'HTML', reply_markup: kb });
+
+}
+
+async function cb_flow_edit(env, uid, cid, mid, u, d, q) {
+
+  u.state = 'WAITING_FLOW_TEMPLATE';
+
+  return tg('editMessageText', env.BOT_TOKEN, { chat_id: cid, message_id: mid, text: '\u{1F4DD} <b>\u6DFB\u52A0\u6D41\u91CF\u4FE1\u606F\u6A21\u677F</b>\n\n\u683C\u5F0F: <code>\u540D\u79F0|upload\uFF1Bdownload\uFF1Btotal\uFF1Bexpire</code>\n\n\u6D41\u91CF\u5355\u4F4D: \u6570\u5B57\u6216\u5E26 g/m \u540E\u7F00\n\u5230\u671F\u65F6\u95F4: YYYY-MM-DD \u683C\u5F0F\u6216 Unix \u65F6\u95F4\u6233\n\n\u793A\u4F8B:\n<code>100GB\u6708\u4ED8|0\uFF1B0\uFF1B100g\uFF1B2026-12-31</code>\n<code>\u65E0\u9650\u6D41\u91CF|0\uFF1B0\uFF1B0\uFF1B0</code>\n<code>50GB\u534A\u5E74|0\uFF1B10g\uFF1B50g\uFF1B1767196800</code>', parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '\u2190 \u53D6\u6D88', callback_data: 'flow_menu' }]] } });
+
+}
+
+async function cb_flow_select(env, uid, cid, mid, u, d, q) {
+
+  const idx = parseInt(d.split(':')[1]);
+
+  const templates = await getFlowTemplates(uid, env);
+
+  if (idx === -1) {
+
+    // 选择"不使用"
+
+    await env.KV.delete('tmpl_flow_active:' + uid);
+
+    u._flowHeader = null;
+
+    u._flowName = null;
+
+    await saveUserConfig(uid, env, u);
+
+    await tg('answerCallbackQuery', env.BOT_TOKEN, { callback_query_id: mid, text: '✅ 已取消流量信息' });
+
+    return cb_flow_menu(env, uid, cid, mid, u, d, q);
+
+  }
+
+  if (idx < 0 || idx >= templates.length) return cb_flow_menu(env, uid, cid, mid, u, d, q);
+
+  await env.KV.put('tmpl_flow_active:' + uid, String(idx));
+
+  u._flowHeader = templates[idx].header;
+
+  u._flowName = templates[idx].name;
+
+  await saveUserConfig(uid, env, u);
+
+  await tg('answerCallbackQuery', env.BOT_TOKEN, { callback_query_id: mid, text: '✅ 已选择: ' + templates[idx].name });
+
+  return cb_flow_menu(env, uid, cid, mid, u, d, q);
+
+}
+
+async function cb_flow_del(env, uid, cid, mid, u, d, q) {
+
+  const idx = parseInt(d.split(':')[1]);
+
+  const templates = await getFlowTemplates(uid, env);
+
+  if (idx >= 0 && idx < templates.length) {
+
+    templates.splice(idx, 1);
+
+    await saveFlowTemplates(uid, env, templates);
+
+    let activeIdx = -1;
+
+    try { activeIdx = await (async () => { const v = parseInt(await env.KV.get('tmpl_flow_active:' + uid)); return isNaN(v) ? -1 : v; })(); } catch {}
+
+    if (activeIdx === idx) {
+
+      await env.KV.delete('tmpl_flow_active:' + uid);
+
+      u._flowHeader = null;
+
+      u._flowName = null;
+
+      await saveUserConfig(uid, env, u);
+
+    } else if (activeIdx > idx) {
+
+      await env.KV.put('tmpl_flow_active:' + uid, String(activeIdx - 1));
+
+    }
+
+  }
+
+  return cb_flow_menu(env, uid, cid, mid, u, d, q);
 
 }
 
@@ -5313,7 +6386,11 @@ export default {
 
         }
 
-        return new Response(raw.text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+        const respHeaders = { 'Content-Type': 'text/plain; charset=utf-8' };
+
+        if (raw.flowHeader) respHeaders['subscription-userinfo'] = raw.flowHeader;
+
+        return new Response(raw.text, { headers: respHeaders });
 
       }
 
@@ -5391,7 +6468,11 @@ export default {
 
         ctx.waitUntil(env.KV.put('share_' + id, JSON.stringify({ ...raw, consumed: true, text: '' }), ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {}));
 
-        return new Response(raw.text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+        const respHeaders = { 'Content-Type': 'text/plain; charset=utf-8' };
+
+        if (raw.flowHeader) respHeaders['subscription-userinfo'] = raw.flowHeader;
+
+        return new Response(raw.text, { headers: respHeaders });
 
       }
 
@@ -5424,6 +6505,8 @@ export default {
       }
 
       const respHeaders = { 'Content-Type': 'text/plain; charset=utf-8' };
+
+      if (raw.flowHeader) respHeaders['subscription-userinfo'] = raw.flowHeader;
 
       return new Response(raw.text, { headers: respHeaders });
 
