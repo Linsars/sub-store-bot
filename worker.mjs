@@ -2382,7 +2382,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
     if (uniqueUrls.length >= 4) {
 
-      // 4+ URL：首选首个 UA 拉取，拉不出再换备用
+      // 4+ URL：批量并行拉取
 
       const allUas = await getUaList(uid, env);
 
@@ -2392,418 +2392,237 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
       const contentSeen = new Map();
 
-      let fetchedCount = 0;
+      const BATCH_SIZE = 5;
 
-      for (const url of uniqueUrls) {
+      const PARALLEL_LIMIT = 10;
 
-        fetchedCount++;
+      // 分批并行 fetch
 
-        await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 [' + fetchedCount + '/' + uniqueUrls.length + ']\n\n' + uniqueUrls.map((u2, i) => {
+      for (let batchStart = 0; batchStart < uniqueUrls.length; batchStart += PARALLEL_LIMIT) {
 
-          const short = u2.length > 40 ? u2.slice(0, 40) + '...' : u2;
+        const batch = uniqueUrls.slice(batchStart, batchStart + PARALLEL_LIMIT);
 
-          return (i < fetchedCount - 1 ? '\u2705' : (i === fetchedCount - 1 ? '\u{1F504}' : '\u23F3')) + ' ' + short;
+        const fetchedCount = batchStart + batch.length;
 
-        }).join('\n') });
+        await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 [' + fetchedCount + '/' + uniqueUrls.length + ']' });
 
-        let text = '';
-        let usedUa = primary;
-        // 自己域名的短链：直接从 KV 读取
-        const clipBase2 = (env.CLIP_URL || '').replace(/\/+$/, '');
-        const isOwnShare = clipBase2 && url.startsWith(clipBase2 + '/share/');
-        if (isOwnShare) {
-          const sid = url.split('/share/')[1]?.split(/[?#]/)[0];
-          const kvD = sid ? await env.KV.get('share_' + sid, { type: 'json' }).catch(() => null) : null;
-          text = (kvD && kvD.text) ? kvD.text : '';
-          usedUa = 'KV_DIRECT';
-        } else {
-        try {
+        const results = await Promise.allSettled(
 
-          text = await Promise.race([
+          batch.map(async (url) => {
 
-            fetch(url, { headers: { 'User-Agent': primary } }).then(r => r.text()),
+            let text = '';
 
-            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+            let usedUa = primary;
 
-          ]);
+            // 自己域名的短链：直接从 KV 读取
 
-        } catch { text = ''; }
-        }
+            const clipBase2 = (env.CLIP_URL || '').replace(/\/+$/, '');
 
-        if (!text || text.length < 50 || text.includes('\u8BBF\u95EE\u88AB\u62D2\u7EDD') || text.includes('\u4E0D\u652F\u6301\u6D4F\u89C8\u5668') || text.includes('<html') || text.includes('<HTML') || text.includes('<!DOC')) {
+            if (clipBase2 && url.startsWith(clipBase2 + '/share/')) {
 
-          text = '';
+              const sid = url.split('/share/')[1]?.split(/[?#]/)[0];
 
-          for (const fb of fallbacks) {
+              const kvD = sid ? await env.KV.get('share_' + sid, { type: 'json' }).catch(() => null) : null;
 
-            try {
+              text = (kvD && kvD.text) ? kvD.text : '';
 
-              text = await Promise.race([
+              usedUa = 'KV_DIRECT';
 
-                fetch(url, { headers: { 'User-Agent': fb } }).then(r => r.text()),
+            } else {
 
-                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+              try {
 
-              ]);
+                text = await Promise.race([
 
-              if (text && text.length >= 50 && !text.includes('<html') && !text.includes('<!DOC')) {
+                  fetch(url, { headers: { 'User-Agent': primary } }).then(r => r.text()),
 
-                usedUa = fb;
+                  new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
 
-                break;
+                ]);
+
+              } catch { text = ''; }
+
+              if (!text || text.length < 50 || text.includes('\u8BBF\u95EE\u88AB\u62D2\u7EDD') || text.includes('\u4E0D\u652F\u6301\u6D4F\u89C8\u5668') || text.includes('<html') || text.includes('<HTML') || text.includes('<!DOC')) {
+
+                text = '';
+
+                for (const fb of fallbacks) {
+
+                  try {
+
+                    text = await Promise.race([
+
+                      fetch(url, { headers: { 'User-Agent': fb } }).then(r => r.text()),
+
+                      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+
+                    ]);
+
+                    if (text && text.length >= 50 && !text.includes('<html') && !text.includes('<!DOC')) {
+
+                      usedUa = fb;
+
+                      break;
+
+                    }
+
+                  } catch { continue; }
+
+                }
 
               }
 
-            } catch { continue; }
-
-          }
-
-        }
-
-        if (!text || text.length < 50) {
-
-          usedUas.push(url + ' \u2192 \u274C \u65E0\u6570\u636E');
-
-          errors.push('\u2022 ' + url + ': \u65E0\u6570\u636E');
-
-          continue;
-
-        }
-
-        const contentKey = text.slice(0, 200).replace(/\d+/g, '');
-
-        if (contentSeen.has(contentKey)) {
-
-          const first = contentSeen.get(contentKey);
-
-          usedUas[first.index] = first.entry + '\n    \u26A0\uFE0F \u91CD\u590D: ' + url;
-
-          dupSubCount++;
-
-          continue;
-
-        }
-
-        const entryIndex = usedUas.length;
-
-        rawTexts.push(text);
-
-        let parsed = null;
-        try { parsed = ProxyUtils.parse(text); } catch { parsed = null; }
-        // ProxyUtils 失败时 fallback 到 parseClashYaml
-        if (!parsed || parsed.length === 0) {
-          try { const y = parseClashYaml(text); if (y.length > 0) parsed = y; } catch {}
-        }
-        if (parsed && parsed.length > 0) {
-
-          // 拉取流量信息
-          let subInfo = null;
-          // 自己域名的短链：从 KV 读 flowHeader
-          if (usedUa === 'KV_DIRECT') {
-            const sidFlow = url.split('/share/')[1]?.split(/[?#]/)[0];
-            if (sidFlow) {
-              const kvFlow = await env.KV.get('share_' + sidFlow, { type: 'json' }).catch(() => null);
-              if (kvFlow && kvFlow.flowHeader) subInfo = kvFlow.flowHeader;
-            }
-          } else {
-            try {
-              const resp = await Promise.race([
-                fetch(url, { headers: { 'User-Agent': 'ClashforWindows/0.19.21', 'Range': 'bytes=0-0' } }),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
-              ]);
-              subInfo = resp.headers.get('subscription-userinfo') || null;
-            } catch { /* ignore */ }
-          }
-
-          const si = subInfo ? parseSubInfo(subInfo) : null;
-
-          // 过期或流量用尽的订阅不合并节点
-
-          if (si && (si.isExpired || si.isExhausted)) {
-
-            const reason = si.isExpired ? '已过期' : '流量已用尽';
-
-            totalSkipped += parsed.length;
-
-            let siLine = '';
-
-            if (si) {
-
-              siLine = '  ' + reason;
-
-              if (si.expire !== '未知') siLine += ' (' + si.expire + ')';
-
-              if (si.isExhausted) siLine += '  \u5269\u4F59 ' + si.remain + '/' + si.total;
-
             }
 
-            usedUas.push(url + ' \u2192 ' + usedUa + ' \u2192 \u26A0\uFE0F ' + parsed.length + '\u4E2A\u8282\u70B9\u5DF2\u8DF3\u8FC7' + siLine);
+            return { url, text, usedUa };
+
+          })
+
+        );
+
+        // 处理结果
+
+        for (const r of results) {
+
+          if (r.status !== 'fulfilled') continue;
+
+          const { url, text, usedUa } = r.value;
+
+          if (!text) {
+
+            usedUas.push(url + ' \u2192 \u274C \u65E0\u6570\u636E');
+
+            errors.push('\u2022 ' + url + ': \u65E0\u6570\u636E');
 
             continue;
 
           }
 
-          const types = {};
+          const contentKey = text.slice(0, 200).replace(/\d+/g, '');
 
-          for (const p of parsed) types[p.type] = (types[p.type] || 0) + 1;
+          if (contentSeen.has(contentKey)) {
 
-          const ts = Object.entries(types).map(([k, v]) => k + ':' + v).join(', ');
+            const first = contentSeen.get(contentKey);
 
-          let siLine = '';
+            usedUas[first.index] = first.entry + '\n    \u26A0\uFE0F \u91CD\u590D: ' + url;
 
-          if (si) {
-
-            siLine = '\n    \u{1F4CA} ' + si.used + ' / ' + si.total + ' (\u5269\u4F59 ' + si.remain + ')' + (si.expire !== '未知' ? '  \u5230\u671F: ' + si.expire + (si.remainTime ? ' (' + si.remainTime + ')' : '') : '  \u5230\u671F: ' + si.expire);
-
-          }
-
-          allProxies = allProxies.concat(parsed);
-
-          const entryText = url + ' \u2192 ' + usedUa + ' \u2192 ' + parsed.length + ' (' + ts + ')' + siLine;
-
-          contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
-
-          usedUas.push(entryText);
-
-        } else {
-
-          const entryText = url + ' \u2192 ' + usedUa + ' \u2192 0';
-
-          contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
-
-          usedUas.push(entryText);
-
-          errors.push('\u2022 ' + url + ': \u65E0\u6709\u6548\u8282\u70B9');
-
-        }
-
-      }
-
-    } else {
-
-      // 2-3 URL：每个 URL 用全 UA 轮询，取最优
-
-      const contentSeen = new Map();
-
-      let fetchedCount = 0;
-
-      for (const url of uniqueUrls) {
-
-        fetchedCount++;
-
-        await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 [' + fetchedCount + '/' + uniqueUrls.length + ']\n\n' + uniqueUrls.map((u2, i) => {
-
-          const short = u2.length > 40 ? u2.slice(0, 40) + '...' : u2;
-
-          return (i < fetchedCount - 1 ? '\u2705' : (i === fetchedCount - 1 ? '\u{1F504}' : '\u23F3')) + ' ' + short;
-
-        }).join('\n') });
-
-        let bestText = '', bestUa = '', bestCount = 0, bestParsed = null;
-
-        // 自己域名的短链：直接从 KV 读取，避免 CF 无法 fetch 自己域名
-        const clipBase3 = (env.CLIP_URL || '').replace(/\/+$/, '');
-        if (clipBase3 && url.startsWith(clipBase3 + '/share/')) {
-          const sid3 = url.split('/share/')[1]?.split(/[?#]/)[0];
-          if (sid3) {
-            const kvD3 = await env.KV.get('share_' + sid3, { type: 'json' }).catch(() => null);
-            if (kvD3 && kvD3.text) {
-              bestText = kvD3.text;
-              bestUa = 'KV_DIRECT';
-              try {
-                let p = ProxyUtils.parse(kvD3.text);
-                if (!p || p.length === 0) {
-                  try { const y = parseClashYaml(kvD3.text); if (y.length > 0) p = y; } catch {}
-                }
-                if (p && p.length > 0) bestParsed = p;
-              } catch {}
-            }
-          }
-        }
-
-        // 非自己域名或 KV 未命中：HTTP fetch + UA 轮询
-        if (!bestParsed) {
-          const uaList = await getUaList(uid, env);
-          if (uaList.length === 0) uaList.push(FETCH_UAS[0]);
-          const seen = new Set();
-          const BATCH_SIZE = 5;
-
-          for (let batchStart = 0; batchStart < uaList.length; batchStart += BATCH_SIZE) {
-
-            const batch = uaList.slice(batchStart, batchStart + BATCH_SIZE);
-
-            const results = await Promise.allSettled(
-
-              batch.map(async (ua) => {
-
-                try {
-
-                  const text = await Promise.race([
-
-                    fetch(url, { headers: { 'User-Agent': ua } }).then(r => r.text()),
-
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
-
-                  ]);
-
-                  return { text, ua };
-
-                } catch { return { text: '', ua }; }
-
-              })
-
-            );
-
-            for (const r of results) {
-
-              if (r.status !== 'fulfilled') continue;
-
-              const text = r.value.text;
-
-              if (!text || text.length < 50) continue;
-
-              if (text.includes('\u8BBF\u95EE\u88AB\u62D2\u7EDD') || text.includes('\u4E0D\u652F\u6301\u6D4F\u89C8\u5668') || text.includes('<html') || text.includes('<HTML') || text.includes('<!DOC')) continue;
-
-              const key = text.slice(0, 200);
-
-              if (seen.has(key)) continue;
-
-              seen.add(key);
-
-              try {
-                let parsed = ProxyUtils.parse(text);
-                if (!parsed || parsed.length === 0) {
-                  try { const y = parseClashYaml(text); if (y.length > 0) parsed = y; } catch {}
-                }
-                if ((parsed?.length || 0) > bestCount) {
-
-                  bestCount = parsed.length;
-
-                  bestText = text;
-
-                  bestUa = r.value.ua;
-
-                  bestParsed = parsed;
-
-                }
-
-              } catch {}
-
-            }
-
-          }
-        }
-
-        if (!bestText) {
-
-          usedUas.push(url + ' \u2192 \u274C \u65E0\u6570\u636E');
-
-          errors.push('\u2022 ' + url + ': \u65E0\u6570\u636E');
-
-          continue;
-
-        }
-
-        const contentKey = bestText.slice(0, 200).replace(/\d+/g, '');
-
-        if (contentSeen.has(contentKey)) {
-
-          const first = contentSeen.get(contentKey);
-
-          usedUas[first.index] = first.entry + '\n    \u26A0\uFE0F \u91CD\u590D: ' + url;
-
-          dupSubCount++;
-
-          continue;
-
-        }
-
-        rawTexts.push(bestText);
-
-        if (bestParsed && bestParsed.length > 0) {
-
-          // 拉取流量信息
-          let subInfo = null;
-          // 自己域名的短链：从 KV 读 flowHeader
-          if (bestUa === 'KV_DIRECT') {
-            const sidFlow = url.split('/share/')[1]?.split(/[?#]/)[0];
-            if (sidFlow) {
-              const kvFlow = await env.KV.get('share_' + sidFlow, { type: 'json' }).catch(() => null);
-              if (kvFlow && kvFlow.flowHeader) subInfo = kvFlow.flowHeader;
-            }
-          } else {
-            try {
-              const resp = await Promise.race([
-                fetch(url, { headers: { 'User-Agent': 'ClashforWindows/0.19.21', 'Range': 'bytes=0-0' } }),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
-              ]);
-              subInfo = resp.headers.get('subscription-userinfo') || null;
-            } catch { /* ignore */ }
-          }
-
-          const si = subInfo ? parseSubInfo(subInfo) : null;
-
-          // 过期或流量用尽的订阅不合并节点
-
-          if (si && (si.isExpired || si.isExhausted)) {
-
-            const reason = si.isExpired ? '已过期' : '流量已用尽';
-
-            totalSkipped += bestParsed.length;
-
-            let siLine = '';
-
-            if (si) {
-
-              siLine = '  ' + reason;
-
-              if (si.expire !== '未知') siLine += ' (' + si.expire + ')';
-
-              if (si.isExhausted) siLine += '  \u5269\u4F59 ' + si.remain + '/' + si.total;
-
-            }
-
-            usedUas.push(url + ' \u2192 ' + bestUa + ' \u2192 \u26A0\uFE0F ' + bestParsed.length + '\u4E2A\u8282\u70B9\u5DF2\u8DF3\u8FC7' + siLine);
+            dupSubCount++;
 
             continue;
 
           }
 
-          const types = {};
+          const entryIndex = usedUas.length;
 
-          for (const p of bestParsed) types[p.type] = (types[p.type] || 0) + 1;
+          rawTexts.push(text);
 
-          const ts = Object.entries(types).map(([k, v]) => k + ':' + v).join(', ');
+          let parsed = null;
 
-          let siLine = '';
+          try { parsed = ProxyUtils.parse(text); } catch { parsed = null; }
 
-          if (si) {
+          if (!parsed || parsed.length === 0) {
 
-            siLine = '\n    \u{1F4CA} ' + si.used + ' / ' + si.total + ' (\u5269\u4F59 ' + si.remain + ')' + (si.expire !== '未知' ? '  \u5230\u671F: ' + si.expire + (si.remainTime ? ' (' + si.remainTime + ')' : '') : '  \u5230\u671F: ' + si.expire);
+            try { const y = parseClashYaml(text); if (y.length > 0) parsed = y; } catch {}
 
           }
 
-          allProxies = allProxies.concat(bestParsed);
+          if (parsed && parsed.length > 0) {
 
-          const entryIndex = usedUas.length;
+            // 拉取流量信息
 
-          const entryText = url + ' \u2192 ' + bestUa + ' \u2192 ' + bestParsed.length + ' (' + ts + ')' + siLine;
+            let subInfo = null;
 
-          contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
+            if (usedUa === 'KV_DIRECT') {
 
-          usedUas.push(entryText);
+              const sidFlow = url.split('/share/')[1]?.split(/[?#]/)[0];
 
-        } else {
+              if (sidFlow) {
 
-          const entryIndex = usedUas.length;
+                const kvFlow = await env.KV.get('share_' + sidFlow, { type: 'json' }).catch(() => null);
 
-          const entryText = url + ' \u2192 ' + bestUa + ' \u2192 0';
+                if (kvFlow && kvFlow.flowHeader) subInfo = kvFlow.flowHeader;
 
-          contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
+              }
 
-          usedUas.push(entryText);
+            } else {
 
-          errors.push('\u2022 ' + url + ': \u65E0\u6709\u6548\u8282\u70B9');
+              try {
+
+                const resp = await Promise.race([
+
+                  fetch(url, { headers: { 'User-Agent': 'ClashforWindows/0.19.21', 'Range': 'bytes=0-0' } }),
+
+                  new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+
+                ]);
+
+                subInfo = resp.headers.get('subscription-userinfo') || null;
+
+              } catch { /* ignore */ }
+
+            }
+
+            const si = subInfo ? parseSubInfo(subInfo) : null;
+
+            // 过期或流量用尽的订阅不合并节点
+
+            if (si && (si.isExpired || si.isExhausted)) {
+
+              const reason = si.isExpired ? '\u5DF2\u8FC7\u671F' : '\u6D41\u91CF\u5DF2\u7528\u5C3D';
+
+              totalSkipped += parsed.length;
+
+              let siLine = '';
+
+              if (si) {
+
+                siLine = '  ' + reason;
+
+                if (si.expire !== '\u672A\u77E5') siLine += ' (' + si.expire + ')';
+
+                if (si.isExhausted) siLine += '  \u5269\u4F59 ' + si.remain + '/' + si.total;
+
+              }
+
+              usedUas.push(url + ' \u2192 ' + usedUa + ' \u2192 \u26A0\uFE0F ' + parsed.length + '\u4E2A\u8282\u70B9\u5DF2\u8DF3\u8FC7' + siLine);
+
+              continue;
+
+            }
+
+            const types = {};
+
+            for (const p of parsed) types[p.type] = (types[p.type] || 0) + 1;
+
+            const ts = Object.entries(types).map(([k, v]) => k + ':' + v).join(', ');
+
+            let siLine = '';
+
+            if (si) {
+
+              siLine = '\n    \u{1F4CA} ' + si.used + ' / ' + si.total + ' (\u5269\u4F59 ' + si.remain + ')' + (si.expire !== '\u672A\u77E5' ? '  \u5230\u671F: ' + si.expire + (si.remainTime ? ' (' + si.remainTime + ')' : '') : '  \u5230\u671F: ' + si.expire);
+
+            }
+
+            allProxies = allProxies.concat(parsed);
+
+            const entryText = url + ' \u2192 ' + usedUa + ' \u2192 ' + parsed.length + ' (' + ts + ')' + siLine;
+
+            contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
+
+            usedUas.push(entryText);
+
+          } else {
+
+            const entryText = url + ' \u2192 ' + usedUa + ' \u2192 0';
+
+            contentSeen.set(contentKey, { url, index: entryIndex, entry: entryText });
+
+            usedUas.push(entryText);
+
+            errors.push('\u2022 ' + url + ': \u65E0\u6709\u6548\u8282\u70B9');
+
+          }
 
         }
 
