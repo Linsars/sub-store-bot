@@ -26,7 +26,7 @@
 
 import { ProxyUtils } from './proxy-utils.esm.js';
 
-const BOT_VERSION = '2.35.0';
+const BOT_VERSION = '2.35.1';
 
 // ==================== 工具函数 ====================
 
@@ -2380,9 +2380,9 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
     // 多 URL
 
-    if (uniqueUrls.length >= 4) {
+    if (uniqueUrls.length >= 2) {
 
-      // 4+ URL：批量并行拉取
+      // 2+ URL：批量并行拉取
 
       const allUas = await getUaList(uid, env);
 
