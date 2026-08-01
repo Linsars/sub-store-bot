@@ -86,7 +86,7 @@ git push
 3. 在列表里找到你刚建的 `sub-fetch-proxy`，点 **Import**
 4. Framework Preset 选 **Other**（默认就行），直接点 **Deploy**
 5. 等十几秒，部署完成会显示 🎉 **Completed**
-6. 你得到一个域名，类似 `sub-fetch-proxy.vercel.app`
+6. 你得到一个域名，类似 `你的项目名.vercel.app`
 
 > ⚠️ **重要**：不要给这个域名套 Cloudflare CDN。如果你有自定义域名想绑，确保 DNS 解析不走 CF 代理（橙色云朵关掉），否则又回到 CF-to-CF 的老问题。
 
