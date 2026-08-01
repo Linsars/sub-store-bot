@@ -94,7 +94,7 @@ git push
 
 回到你的 Cloudflare Worker 页面：
 
-1. 进入 **sub-store-bot1** → **设置** → **变量与密钥**
+1. 进入 **sub-store-bot** → **设置** → **变量与密钥**
 2. 添加环境变量：
    - **变量名**：`PROXY_URL`
    - **值**：`https://你的项目名.vercel.app/api?url=`
