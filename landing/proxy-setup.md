@@ -90,6 +90,18 @@ git push
 
 > ⚠️ **重要**：不要给这个域名套 Cloudflare CDN。如果你有自定义域名想绑，确保 DNS 解析不走 CF 代理（橙色云朵关掉），否则又回到 CF-to-CF 的老问题。
 
+### 第三步半：设置访问令牌（强烈建议）
+
+反代是公开服务，**任何人知道你的域名都能用**，会消耗你的 Vercel 免费额度。建议加 token 鉴权：
+
+1. 在 Vercel 项目页 → **Settings** → **Environment Variables**
+2. 添加变量：**Key** 填 `PROXY_TOKEN`，**Value** 填一串随机字符串（比如 `openssl rand -hex 16` 生成的）
+3. 保存后重新部署（**Deployments** → 点最上一条 → **⋮** → **Redeploy**）
+4. 之后所有请求都必须带 `token` 参数，否则返回 403：
+   ```
+   https://你的项目名.vercel.app/api?token=你的TOKEN&url=目标地址
+   ```
+
 ### 第四步：告诉 Bot 这个反代的存在
 
 回到你的 Cloudflare Worker 页面：
@@ -97,8 +109,8 @@ git push
 1. 进入 **sub-store-bot** → **设置** → **变量与密钥**
 2. 添加环境变量：
    - **变量名**：`PROXY_URL`
-   - **值**：`https://你的项目名.vercel.app/api?url=`
-   （把 `你的项目名.vercel.app` 换成第三步得到的域名）
+   - **值**：`https://你的项目名.vercel.app/api?token=你的TOKEN&`
+   （把 `你的项目名.vercel.app` 换成第三步得到的域名；若第三步半设置了 `PROXY_TOKEN`，`你的TOKEN` 换成该值，注意末尾是 `&` 不是 `?`）
 3. 点 **保存并部署**
 
 ### 第五步：验证
@@ -115,7 +127,8 @@ curl -s -o /dev/null -w "%{http_code}" "https://你的订阅链接.com/xxx"
 # → 403
 
 # 走反代（应该 200）
-curl -s -o /dev/null -w "%{http_code}" "https://你的项目名.vercel.app/api?url=https%3A%2F%2F你的订阅链接.com%2Fxxx"
+curl -s -o /dev/null -w "%{http_code}" "https://你的项目名.vercel.app/api?token=你的TOKEN&url=https%3A%2F%2F你的订阅链接.com%2Fxxx"
+# 期望输出 200。若返回 403，说明 token 不对或没设置 PROXY_TOKEN
 # → 200
 ```
 
