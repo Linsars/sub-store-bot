@@ -6009,7 +6009,7 @@ export default {
 
     }
 
-    // API: 文本保存 (jtb-clip 兼容)
+    // API: 文本保存
 
     if (path === '/save' && request.method === 'POST') {
 

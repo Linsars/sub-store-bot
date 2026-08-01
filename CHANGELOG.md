@@ -2,7 +2,7 @@
 
 - 修复：2-3 个订阅一起拉取时失败（多 URL 分支缺失，`>= 4` 改为 `>= 2`）
 - 修复：订阅拉取全部失败（worker 加 nodejs_compat flag，ProxyUtils.parse 解析 Clash YAML 正常）
-- 部署：jtb-clip 开启 nodejs_compat（proxy-utils 依赖 Buffer/require("util")）
+- 部署：开启 nodejs_compat 兼容 flag（proxy-utils 依赖 Buffer/require("util")）
 
 ## v2.35.0 (2026-07-28)
 
