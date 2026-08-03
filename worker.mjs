@@ -26,7 +26,7 @@
 
 import { ProxyUtils } from './proxy-utils.esm.js';
 
-const BOT_VERSION = '2.35.1';
+const BOT_VERSION = '2.35.2';
 
 // ==================== 工具函数 ====================
 
@@ -1757,7 +1757,13 @@ async function fetchSub(url, uid, env) {
 
     try {
 
-      const proxyUrl = env.PROXY_URL + encodeURIComponent(url);
+      // 自动补 url= 前缀，兼容 PROXY_URL 以 & 结尾或缺 url= 的配置
+      let proxyBase = env.PROXY_URL;
+      if (!/url=/.test(proxyBase)) {
+        if (!proxyBase.endsWith('&') && !proxyBase.endsWith('?')) proxyBase += (proxyBase.includes('?') ? '&' : '?');
+        proxyBase += 'url=';
+      }
+      const proxyUrl = proxyBase + encodeURIComponent(url);
 
       const proxyText = await Promise.race([
 
@@ -2362,7 +2368,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
         }
 
-        usedUas.push(uniqueUrls[0] + ' \u2192 ' + (subResult.ua === 'proxy' ? 'Karing' : subResult.ua) + ' \u2192 ' + parsed.length + siLine);
+        usedUas.push(uniqueUrls[0] + ' \u2192 ' + (subResult.ua === 'proxy' ? '\u53CD\u4EE3(Karing)' : subResult.ua) + ' \u2192 ' + parsed.length + siLine);
 
       } else {
 

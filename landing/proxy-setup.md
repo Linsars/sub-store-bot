@@ -109,8 +109,8 @@ git push
 1. 进入 **sub-store-bot** → **设置** → **变量与密钥**
 2. 添加环境变量：
    - **变量名**：`PROXY_URL`
-   - **值**：`https://你的项目名.vercel.app/api?token=你的TOKEN&`
-   （把 `你的项目名.vercel.app` 换成第三步得到的域名；若第三步半设置了 `PROXY_TOKEN`，`你的TOKEN` 换成该值，注意末尾是 `&` 不是 `?`）
+   - **值**：`https://你的项目名.vercel.app/api?token=你的TOKEN`
+   （把 `你的项目名.vercel.app` 换成第三步得到的域名；若第三步半设置了 `PROXY_TOKEN`，`你的TOKEN` 换成该值。**末尾不需要加 `&` 或 `url=`**，bot 会自动拼接）
 3. 点 **保存并部署**
 
 ### 第五步：验证

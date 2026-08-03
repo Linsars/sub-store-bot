@@ -32,7 +32,7 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
    - `BOT_TOKEN` = Telegram Bot Token（必须是文本类型，**必填**，在执行步骤3激活之前填）
    - `CLIP_URL` = 你的 Worker 域名或其他可路由到此worker的域名，如 `https://xxx.workers.dev`（**必填**，在执行步骤3激活之后填）
    - `WEBHOOK_SECRET` = 域名防呆（可选，随便设置个密码）
-   - `PROXY_URL` = 反代地址，绕过 CF 拦截（可选，[搭建教程](landing/proxy-setup.md)）。若反代启用了 token 鉴权，格式为 `https://你的项目名.vercel.app/api?token=你的TOKEN&`（注意末尾 `&`）
+   - `PROXY_URL` = 反代地址，绕过 CF 拦截（可选，[搭建教程](landing/proxy-setup.md)）。若反代启用了 token 鉴权，格式为 `https://你的项目名.vercel.app/api?token=你的TOKEN`（bot 会自动补 `url=` 前缀，无需手动拼 `&` 或 `url=`）
    - `DEBUG_TOKEN` = 随意设个密码，用于 debug-fetch 接口鉴权（可选）
    - `LANDING_DIR` = 落地页和模板目录（可选，复制目录页地址删掉 `tree`，如 `https://github.com/Linsars/sub-store-bot/main/landing`）
 3. 去 **描述** 页面，点 Worker 域名激活 bot，然后复制此域名去填CLIP_URL
@@ -47,7 +47,7 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 | `KV` | KV Namespace 绑定名（一键部署自动创建） | ✅ |
 | `ALLOWED_USERS` | 允许的用户 ID（逗号分隔），不设则全部开放 | ❌ |
 | `WEBHOOK_SECRET` | Webhook 请求头校验，防域名探测 | ❌ |
-| `PROXY_URL` | 反代基础 URL，绕过 CF-to-CF 拉取拦截。反代启用鉴权时填 `https://你的项目名.vercel.app/api?token=你的TOKEN&` | ❌ |
+| `PROXY_URL` | 反代基础 URL，绕过 CF-to-CF 拉取拦截。反代启用鉴权时填 `https://你的项目名.vercel.app/api?token=你的TOKEN`（`url=` 由 bot 自动拼接） | ❌ |
 | `DEBUG_TOKEN` | debug-fetch 接口鉴权 Token | ❌ |
 | `LANDING_DIR` | 落地页和模板目录，默认 `Linsars/sub-store-bot/main/landing` | ❌ |
 
