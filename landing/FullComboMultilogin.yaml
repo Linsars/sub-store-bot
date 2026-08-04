@@ -1,4 +1,7 @@
-# Updated: 2026-07-27 20:43 | FullComboMultilogin (Clash/Windows): Patch AA — fiat24.com → Crypto & Lark; Crypto & Lark select gains DIRECT as last manual option (default unchanged ✈️稳定A组; picking DIRECT exposes Lark real IP — temporary use only). Mirrors Mac+iOS. Patch Z — `qiqiyg.com` DIRECT→Proxy (direct path GFW SNI-blocked; crawler retired). Mirrors Mac+iOS. Patch T — add 🇨🇳 台湾节点 to `Intelligence` fallback (after JP/SG/US) per user; mirrors Mac+iOS. Patch S — (1) `Crypto & Lark` fallback→select with country switch options (✈️稳定A组/iOX default-first to keep Lark-safe egress, then 🇨🇳/🇭🇰/🇸🇬/🇯🇵/🇺🇸 + 🔄备选B组 for manual picking; NO DIRECT — Lark hard-constraint). Restores country switch lost in Patch F iOX-only lock (mirrors Mac+iOS). (2) Cover Cursor IDE: cursor.sh/cursor.com/cursorapi.com/cursor-cdn.com → Intelligence (JP/SG/US) so its HTTP/2 model+indexing streams stop falling to auto-HK. Patch L — PH fallback: add 🇭🇰 香港节点 + 🇨🇳 台湾节点 after JP/SG, before 🔄 备选B组 (mirrors Mac+iOS). fallback = ordered, HK/TW engage only if JP+SG die. Patch K — add gate.com (DOMAIN-SUFFIX) to Crypto & Lark exchange list (mirrors Mac+iOS). Patch H — dns.nameserver-policy `+.cloud-nodes.com` → 124.221.68.73:1053. Patch G — StableA filter: only 美国 CIA + metadata excluded (Fusion/香港 CIA/IEPL restored). Patch F — hybrid JP/SG/US throughput probe; TW/HK latency probe; Crypto & Lark iOX-only (StableA); Nexitally backup on PH/Upwork/Adobe-US; 美国 CIA excluded. Sunflower skipped (Clash). Patch E — PH throughput probe + iOX-only JP/SG; country groups HK/US/JP/TW/SG use speed.cloudflare 200KB probe, interval 300. Patch D — reorder PH (JP first), Upwork (+JP/SG before DIRECT), Adobe-US (url-test→fallback US-then-JP-then-SG), TikTok+GlobalMedia (JP/SG before dead US). All affected groups: interval 600→300. Crypto & Lark unchanged. Patch C — also exclude `香港 CIA` from StableA filter (dead `cia_hk_*_ct` nodes). Patch A — exclude `Fusion`. Cascades to country groups via `use: [StableA, StableB]`.
+# 电商私有DNS 分流模板 (FullComboMultilogin 改造)
+# 节点来自订阅, 由 bot 自动填充
+# 私有 DNS: +.cloud-nodes.com / *.oix_nodes.com → 124.221.68.73:1053
+
 
 mixed-port: 7890
 allow-lan: false
@@ -81,107 +84,88 @@ dns:
 proxies:
 
 proxy-groups:
-  - name: "✈️ 稳定A组"
+  - name: "✈️ 所有节点"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA]
+    proxies: [__ALL_NODES__]
     url: http://connectivitycheck.gstatic.com/generate_204
     interval: 600
     tolerance: 50
     # Patch G (2026-05-25): only exclude status metadata + dead 美国 CIA. Fusion/香港 CIA/IEPL
     # exclusions rolled back — OIX Cloud profile proves HK/TW/SG Fusion healthy after rotation.
-    # 原 filter(provider 专用): "^((?!Traffic|Expire|G \\||Reset|美国 CIA).)*$"
-
-  - name: "🔄 备选B组"
-    type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableB]
-    url: http://connectivitycheck.gstatic.com/generate_204
-    interval: 600
-    tolerance: 50
-    # 原 filter(provider 专用): "^((?!Traffic|Expire|G \\||Reset).)*$"
 
   - name: "🇭🇰 香港节点"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: http://cp.cloudflare.com/generate_204
     interval: 600
     tolerance: 50
-    # 原 filter(provider 专用): "(🇭🇰|香港|Hong|HK)"
 
   - name: "🇺🇸 美国节点"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: https://speed.cloudflare.com/__down?bytes=200000
     interval: 300
     tolerance: 50
-    # 原 filter(provider 专用): "(🇺🇸|美国|States|US)"
 
   - name: "🇯🇵 日本节点"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: https://speed.cloudflare.com/__down?bytes=200000
     interval: 300
     tolerance: 50
-    # 原 filter(provider 专用): "(🇯🇵|日本|Japan|JP)"
 
   - name: "🇨🇳 台湾节点"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: http://cp.cloudflare.com/generate_204
     interval: 600
     tolerance: 50
-    # 原 filter(provider 专用): "(🇨🇳|台湾|Tai|TW)"
 
   - name: "🇰🇷 韩国节点"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: http://cp.cloudflare.com/generate_204
     interval: 600
     tolerance: 50
-    # 原 filter(provider 专用): "(🇰🇷|韩国|Korea|KR)"
 
   - name: "🇸🇬 新加坡节点"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: https://speed.cloudflare.com/__down?bytes=200000
     interval: 300
     tolerance: 50
-    # 原 filter(provider 专用): "(🇸🇬|新加坡|Singapore|SG)"
 
   - name: "🇮🇪 爱尔兰节点"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: http://cp.cloudflare.com/generate_204
     interval: 600
     tolerance: 50
-    # 原 filter(provider 专用): "(🇮🇪|爱尔兰|Ireland|IE)"
 
   - name: "🇨🇭 瑞士节点"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: http://cp.cloudflare.com/generate_204
     interval: 600
     tolerance: 50
-    # 原 filter(provider 专用): "(🇨🇭|瑞士|Switzerland|CH|🇩🇪|德国|Germany|DE)"
 
   - name: "🇬🇧 英国节点"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: http://cp.cloudflare.com/generate_204
     interval: 600
     tolerance: 50
-    # 原 filter(provider 专用): "(🇬🇧|英国|UK|United Kingdom|London|GB)"
 
   - name: "🇨🇦 Canada Auto"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: http://www.gstatic.com/generate_204
     interval: 600
     tolerance: 50
-    # 原 filter(provider 专用): "(Canada|🇨🇦|加拿大|CA)"
 
   - name: "✉️ 邮件专用"
     type: fallback
-    proxies: [__ALL_NODES__]   # 原 use: [StableA]
+    proxies: [__ALL_NODES__]
     url: http://www.gstatic.com/generate_204
     interval: 600
 
@@ -191,20 +175,20 @@ proxy-groups:
       - "🇺🇸 美国节点"
       - "🇯🇵 日本节点"
       - "🇸🇬 新加坡节点"
-      - "🔄 备选B组"
+      - "✈️ 所有节点"
     url: http://cp.cloudflare.com/generate_204
     interval: 300
 
   - name: "Crypto & Lark"
     type: select
     proxies:
-      - "✈️ 稳定A组"
+      - "✈️ 所有节点"
       - "🇨🇳 台湾节点"
       - "🇭🇰 香港节点"
       - "🇸🇬 新加坡节点"
       - "🇯🇵 日本节点"
       - "🇺🇸 美国节点"
-      - "🔄 备选B组"
+      - "✈️ 所有节点"
       - DIRECT
 
   - name: "Lark Call"
@@ -221,8 +205,8 @@ proxy-groups:
     proxies:
       - "Adobe-US"
       - "Crypto & Lark"
-      - "✈️ 稳定A组"
-      - "🔄 备选B组"
+      - "✈️ 所有节点"
+      - "✈️ 所有节点"
       - "🇨🇦 Canada Auto"
       - "🇭🇰 香港节点"
       - "🇺🇸 美国节点"
@@ -253,7 +237,7 @@ proxy-groups:
       - "🇺🇸 美国节点"
       - "🇯🇵 日本节点"
       - "🇸🇬 新加坡节点"
-      - "🔄 备选B组"
+      - "✈️ 所有节点"
       - DIRECT
     url: http://cp.cloudflare.com/generate_204
     interval: 300
@@ -376,11 +360,10 @@ proxy-groups:
 
   - name: "Instagram & Meta"
     type: url-test
-    proxies: [__ALL_NODES__]   # 原 use: [StableA, StableB]
+    proxies: [__ALL_NODES__]
     url: http://www.gstatic.com/generate_204
     interval: 600
     tolerance: 200
-    # 原 filter(provider 专用): "(Switzerland 01|Ireland 01|🇩🇪|德国|Germany)"
 
   - name: "PH"
     type: fallback
@@ -389,7 +372,7 @@ proxy-groups:
       - "🇸🇬 新加坡节点"
       - "🇭🇰 香港节点"
       - "🇨🇳 台湾节点"
-      - "🔄 备选B组"
+      - "✈️ 所有节点"
     url: https://speed.cloudflare.com/__down?bytes=200000
     interval: 300
 
