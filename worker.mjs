@@ -25,8 +25,9 @@
  */
 
 import { ProxyUtils } from './proxy-utils.esm.js';
+import net from 'node:net';
 
-const BOT_VERSION = '2.35.2';
+const BOT_VERSION = '2.36.17';
 
 // ==================== 工具函数 ====================
 
@@ -300,6 +301,10 @@ function parseProxiesWithSurge(text, skipSurge) {
 
   try { const s = parseSingboxYaml(text); if (s.length > 0) return s; } catch {}
 
+  // parseSingboxJson：sing-box 官方 JSON 格式（outbounds 数组）
+
+  try { const j = parseSingboxJson(text); if (j.length > 0) return j; } catch {}
+
   // ProxyUtils.parse 兜底（慢但全，处理非 YAML 格式）
 
   try { const r = ProxyUtils.parse(text); if (r && r.length > 0) return r; } catch {}
@@ -411,6 +416,81 @@ function parseSingboxYaml(text) {
   }
 
   if (currentProxy && currentProxy.type && currentProxy.server) proxies.push(currentProxy);
+
+  return proxies;
+
+}
+
+// sing-box 官方 JSON 格式解析器(outbounds 数组), 通用能力
+function parseSingboxJson(text) {
+
+  const proxies = [];
+
+  if (!text || typeof text !== 'string') return proxies;
+
+  let obj = null;
+
+  try { obj = JSON.parse(text); } catch { return proxies; }
+
+  if (!obj || !Array.isArray(obj.outbounds)) return proxies;
+
+  const skipTypes = new Set(['selector', 'urltest', 'direct', 'block', 'dns-out', 'dns', 'tun', 'redirect', 'mixed', 'shadowtls', 'hysteria']);
+
+  const typeMap = { shadowsocks: 'ss', socks: 'socks5', 'socks5': 'socks5', https: 'https', 'http': 'http' };
+
+  for (const o of obj.outbounds) {
+
+    if (!o || typeof o !== 'object') continue;
+
+    if (skipTypes.has(o.type)) continue;
+
+    if (!o.server || !o.server_port) continue;
+
+    const p = { name: o.tag || o.server, type: typeMap[o.type] || o.type, server: o.server, port: o.server_port, udp: true };
+
+    if (o.password) p.password = o.password;
+
+    if (o.method) p.cipher = o.method;
+
+    if (o.uuid) p.uuid = o.uuid;
+
+    if (o.flow) p.flow = o.flow;
+
+    if (o.username) p.username = o.username;
+
+    if (o.private_key) p['private-key'] = o.private_key;
+
+    if (o.peer_public_key) p['public-key'] = o.peer_public_key;
+
+    if (o.local_address && o.local_address.length > 0) p.ip = o.local_address[0];
+
+    if (o.tls && typeof o.tls === 'object') {
+
+      if (o.tls.server_name) p.sni = o.tls.server_name;
+
+      if (o.tls.insecure) p['skip-cert-verify'] = true;
+
+      if (o.tls.uuid) p.uuid = o.tls.uuid;
+
+      if (o.tls.alpn && Array.isArray(o.tls.alpn)) p.alpn = o.tls.alpn.join(',');
+
+    }
+
+    if (o.transport && typeof o.transport === 'object') {
+
+      if (o.transport.type) p.network = o.transport.type;
+
+      if (o.transport.path) p['ws-path'] = o.transport.path;
+
+      if (o.transport.host) p['ws-host'] = o.transport.host;
+
+      if (o.transport.service_name) p['grpc-service-name'] = o.transport.service_name;
+
+    }
+
+    proxies.push(p);
+
+  }
 
   return proxies;
 
@@ -1021,6 +1101,8 @@ function fmtKb(allowed, convTtl, ttlDefault, u) {
 
   rows.push([{ text: '\u{23F1} \u672C\u6B21\u65F6\u9650: ' + ttlLabel + ' / ' + accLabel, callback_data: 'conv_limit_menu' }]);
 
+  rows.push([{ text: (u?._checkAlive ? '\u2705 ' : '') + '\u{1F52C} \u6D4B\u6D3B\u8F93\u51FA\u3010\u5B9E\u9A8C\u3011', callback_data: 'conv_toggle_check' }]);
+
   rows.push([{ text: (u?._burn ? '\u2705 ' : '') + '\u{1F525} \u9605\u540E\u5373\u711A', callback_data: 'conv_toggle_burn' }]);
 
   rows.push([{ text: (u?._landing ? '\u2705 ' : '') + '\u{1F504} \u6885\u5F00\u4E8C\u5EA6', callback_data: 'conv_toggle_landing' }]);
@@ -1435,6 +1517,8 @@ async function saveUserConfig(uid, env, state) {
 
   if ('_flowName' in state) cfg._flowName = state._flowName;
 
+  if ('_checkAlive' in state) cfg._checkAlive = state._checkAlive;
+
   await env.KV.put('cfgu:' + uid, JSON.stringify(cfg)).catch(() => {});
 
 }
@@ -1655,12 +1739,15 @@ async function getUaList(uid, env) {
 
 }
 
-async function fetchSub(url, uid, env) {
+async function fetchSub(url, uid, env, progress) {
   // 自己域名的短链：直接从 KV 读取，避免 CF 无法 fetch 自己域名
-  const clipBase = (env.CLIP_URL || '').replace(/\/+$/, '');
+  const clipBase = env._clipBase || '';
   if (clipBase && url.startsWith(clipBase + '/share/')) {
     const id = url.split('/share/')[1]?.split(/[?#]/)[0];
     if (id) {
+
+      if (progress) await progress({ type: 'kv' });
+
       const kvData = await env.KV.get('share_' + id, { type: 'json' }).catch(() => null);
       if (kvData && kvData.text) {
         return { text: kvData.text, ua: 'KV_DIRECT' };
@@ -1729,7 +1816,16 @@ async function fetchSub(url, uid, env) {
 
       try {
 
-        const parsed = ProxyUtils.parse(text);
+        // 完整解析链(含 Surge 配置解析), 避免 Surge 格式订阅被判 0 节点
+        let parsed = null;
+
+        try { parsed = parseProxies(text); } catch {}
+
+        if (!parsed || parsed.length === 0) {
+
+          try { parsed = ProxyUtils.parse(text); } catch {}
+
+        }
 
         const count = parsed?.length || 0;
 
@@ -1749,11 +1845,18 @@ async function fetchSub(url, uid, env) {
 
     }
 
-  }
+  
+
+    // 批次进度报告
+    if (progress) await progress({ type: 'ua', done: Math.min(batchStart + BATCH_SIZE, uaList.length), total: uaList.length, found: bestCount, ua: bestUa });
+
+}
 
   // 直连全失败 → 走反代（绕过 CF Worker 被 CF 防护拦截）
 
   if (!bestText && env.PROXY_URL) {
+
+    if (progress) await progress({ type: 'proxy' });
 
     try {
 
@@ -1803,6 +1906,313 @@ async function fetchSub(url, uid, env) {
 
   return { text: bestText, ua: bestUa, count: bestCount, proxies: bestParsed };
 
+}
+
+// ==================== 机场私有 DNS 注入（mihomo proxy-server-nameserver → sing-box） ====================
+// 用途：mihomo 订阅里的 dns.proxy-server-nameserver（机场私有 DNS，解析节点真实 IP）在转 sing-box 时默认丢失。
+// 此函数从原始订阅文本提取该段，注入 sing-box 输出的 dns.servers，并给域名型 outbound 加 domain_resolver。
+
+function isIPAddr(v) {
+  if (!v) return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(v)) return true;
+  if (v.indexOf(':') >= 0) return true; // IPv6
+  return false;
+}
+
+// 提取 mihomo 订阅文本里的 dns.proxy-server-nameserver（或 nameserver 兜底）
+function extractProxyServerNameserver(subText) {
+  if (!subText || typeof subText !== 'string') return [];
+  const lines = subText.split('\n');
+  const inDns = [];
+  let found = false;
+  for (const line of lines) {
+    const m = line.match(/^(\s*)dns:/);
+    if (m) { found = true; continue; }
+    if (found) {
+      const indent = line.match(/^(\s*)\S/);
+      if (!indent || indent[1].length <= 0) break; // dns 段结束
+      inDns.push(line);
+    }
+  }
+  const dnsText = inDns.join('\n');
+  // 提取 proxy-server-nameserver 下的列表（支持多行）
+  let section = null;
+  const list = [];
+  for (const line of inDns) {
+    const m = line.match(/^(\s*)proxy-server-nameserver:\s*(.*)$/);
+    if (m) {
+      section = m[1].length;
+      const inline = m[2].trim();
+      if (inline) {
+        // 行内列表: "proxy-server-nameserver: [a, b]" 或 "proxy-server-nameserver: a, b"
+        const clean = inline.replace(/^\[|\]$/g, '');
+        clean.split(',').map(s => s.trim()).filter(Boolean).forEach(s => list.push(s));
+        section = null; // 行内已处理完
+      }
+      continue;
+    }
+    if (section !== null) {
+      if (!line.trim() || line.trim().startsWith('#')) continue;
+      const sm = line.match(/^(\s*)(-\s*)?(\S.*)$/);
+      if (sm && sm[1].length > section) {
+        list.push(sm[3].trim());
+      } else {
+        break;
+      }
+    }
+  }
+  if (list.length > 0) return list;
+  // fallback: nameserver
+  for (const line of inDns) {
+    const m = line.match(/^(\s*)nameserver:\s*(.*)$/);
+    if (m) {
+      const after = m[2].trim();
+      if (after) {
+        const clean = after.replace(/^\[|\]$/g, '');
+        const l = clean.split(',').map(s => s.trim()).filter(Boolean);
+        if (l.length > 0) return l;
+      }
+      return null; // 多行列表，简单起见不深入
+    }
+  }
+  return null;
+}
+
+// mihomo DNS 地址 → sing-box DNS server 配置
+function mihomoDnsToSingboxServer(addr) {
+  if (addr == null || addr === '') return null;
+  const raw = String(addr).trim();
+  const hashIdx = raw.indexOf('#');
+  const base = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+  const params = {};
+  if (hashIdx >= 0) {
+    raw.slice(hashIdx + 1).split('&').filter(Boolean).forEach(function (p) {
+      const eq = p.indexOf('=');
+      if (eq >= 0) params[p.slice(0, eq)] = p.slice(eq + 1);
+      else params[p] = true;
+    });
+  }
+  if (base === 'system' || base === 'system://') return { type: 'local' };
+  if (/^rcode:/.test(base)) return null;
+  let scheme = '';
+  let rest = base;
+  const m = base.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(.*)$/);
+  if (m) { scheme = m[1].toLowerCase(); rest = m[2]; }
+  if (scheme === 'dhcp') {
+    const server = { type: 'dhcp' };
+    if (rest && rest !== 'system') server.interface = rest;
+    return server;
+  }
+  let port = 0;
+  let path = '';
+  const slash = rest.indexOf('/');
+  if (slash >= 0) { path = rest.slice(slash); rest = rest.slice(0, slash); }
+  let host = rest;
+  if (rest.charAt(0) === '[') {
+    const close = rest.indexOf(']');
+    if (close > 0) {
+      host = rest.slice(1, close);
+      const pm = rest.slice(close + 1).match(/^:(\d+)$/);
+      if (pm) port = parseInt(pm[1], 10);
+    }
+  } else {
+    const idx = rest.lastIndexOf(':');
+    if (idx > 0 && /^\d+$/.test(rest.slice(idx + 1))) {
+      host = rest.slice(0, idx);
+      port = parseInt(rest.slice(idx + 1), 10);
+    }
+  }
+  if (!host) return null;
+  let type = scheme || 'udp';
+  if (params.h3) type = 'h3';
+  const server = { type: type, server: host };
+  if (port) server.server_port = port;
+  if ((type === 'https' || type === 'h3') && path) server.path = path;
+  if (params['skip-cert-verify']) server.insecure = true;
+  return server;
+}
+
+// 判断是否为公共 DNS（纯 IP 或知名公共 DNS 域名）
+// 返回 true = 公共 DNS；false = 私有/未知
+function isPublicDnsAddr(addr) {
+  if (!addr) return true;
+  const raw = String(addr).trim();
+  const hashIdx = raw.indexOf('#');
+  const base = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+  let rest = base;
+  const m = base.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(.*)$/);
+  if (m) rest = m[2];
+  else rest = base.replace(/^tls\+/, '').replace(/^https\+/, '').replace(/^udp\+/, '');
+  // 去掉端口
+  let host = rest;
+  const slash = rest.indexOf('/');
+  if (slash >= 0) host = rest.slice(0, slash);
+  if (host.charAt(0) === '[') {
+    const close = host.indexOf(']');
+    if (close > 0) host = host.slice(1, close);
+  } else {
+    const idx = host.lastIndexOf(':');
+    if (idx > 0 && /^\d+$/.test(host.slice(idx + 1))) host = host.slice(0, idx);
+  }
+  if (!host) return true;
+  // 纯 IP → 视为公共（机场私有 DNS 几乎不会用裸 IP，且 IP 解析无依赖）
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true;
+  if (host.indexOf(':') >= 0) return true; // IPv6
+  // 知名公共 DNS 域名
+  const h = host.toLowerCase();
+  if (/cloudflare-dns\.com$/.test(h)) return true;
+  if (/dns\.google$/.test(h)) return true;
+  if (/doh\.pub$/.test(h)) return true;
+  if (/alidns\.com$/.test(h)) return true;
+  if (/one\.one\.one\.one$/.test(h)) return true;
+  if (/dns\.sb$/.test(h)) return true;
+  if (/dot\.sb$/.test(h)) return true;
+  if (/doh\.dns\.sb$/.test(h)) return true;
+  if (/quad9\.net$/.test(h)) return true;
+  if (/dns\.unfiltered\.adguard\.com$/.test(h)) return true;
+  return false; // 未知域名 → 视为私有
+}
+
+// 判断 psn 列表是否"全部是公共 DNS"
+function isAllPublicDns(list) {
+  if (!list || list.length === 0) return true;
+  return list.every(isPublicDnsAddr);
+}
+
+// 注入 sing-box JSON 输出：dns.servers + 域名型 outbound 的 domain_resolver
+function injectPrivateDns(singboxOutput, subText, opts = {}) {
+  if (!singboxOutput || !subText) return singboxOutput;
+  let config;
+  try { config = JSON.parse(singboxOutput); } catch { return singboxOutput; }
+  const psnRaw = extractProxyServerNameserver(subText);
+  if (!psnRaw) return singboxOutput;
+  // psnRaw 可能是数组（多行/行内列表）或单值字符串
+  let list = [];
+  if (Array.isArray(psnRaw)) {
+    list = psnRaw.map(s => String(s).trim()).filter(Boolean);
+  } else if (typeof psnRaw === 'string') {
+    list = psnRaw.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  // 纯公共 DNS → 不注入（无意义，避免画蛇添足）
+  if (opts.allowPublic !== true && isAllPublicDns(list)) return singboxOutput;
+  if (list.length === 0) return singboxOutput;
+  const servers = list.map(mihomoDnsToSingboxServer).filter(Boolean);
+  if (servers.length === 0) return singboxOutput;
+  const tagPrefix = opts.tagPrefix || 'psn';
+  const detour = opts.detour || '';
+  const config2 = config;
+  config2.dns = config2.dns || {};
+  config2.dns.servers = config2.dns.servers || [];
+  const existing = {};
+  config2.dns.servers.forEach(function (s) { if (s && s.tag) existing[s.tag] = true; });
+  const freeTag = function (want) {
+    let tag = want; let n = 1;
+    while (existing[tag]) { tag = want + '-' + (n++); }
+    return tag;
+  };
+  const entries = servers.map(function (s, i) {
+    const tag = freeTag(servers.length > 1 ? tagPrefix + '-' + i : tagPrefix);
+    const entry = Object.assign({ tag: tag }, s);
+    if (detour) entry.detour = detour;
+    if (!isIPAddr(entry.server)) entry.domain_resolver = 'local';
+    existing[tag] = true;
+    return entry;
+  });
+  entries.forEach(function (e) { config2.dns.servers.push(e); });
+  let resolverTag = entries[0].tag;
+  if (servers.length > 1) {
+    const groupTag = freeTag(tagPrefix);
+    const group = { type: 'group', tag: groupTag, servers: entries.map(function (e) { return e.tag; }) };
+    existing[groupTag] = true;
+    config2.dns.servers.push(group);
+    resolverTag = groupTag;
+  }
+  // 给域名型 outbound 加 domain_resolver
+  (config2.outbounds || []).forEach(function (o) {
+    if (o && o.tag && o.server && !isIPAddr(o.server) && !o.domain_resolver) {
+      o.domain_resolver = resolverTag;
+    }
+  });
+  return JSON.stringify(config2, null, 2);
+}
+
+// 注入 Clash Meta (mihomo) YAML 输出：补 dns.proxy-server-nameserver 段
+// 输入订阅的私有 DNS 在转 clashmeta 时会丢失，这里补回
+function injectPrivateDnsClash(clashOutput, subText) {
+  if (!clashOutput || !subText) return clashOutput;
+  const psnRaw = extractProxyServerNameserver(subText);
+  if (!psnRaw) return clashOutput;
+  let list = [];
+  if (Array.isArray(psnRaw)) {
+    list = psnRaw.map(s => String(s).trim()).filter(Boolean);
+  } else if (typeof psnRaw === 'string') {
+    list = psnRaw.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  if (list.length === 0) return clashOutput;
+  if (isAllPublicDns(list)) return clashOutput; // 纯公共 DNS 不注入
+  // 输出已有 dns 段 → 合并追加到 proxy-server-nameserver（不顶掉用户模板 DNS）
+  const dnsMatch = clashOutput.match(/^dns:/m);
+  if (dnsMatch) {
+    const idx = dnsMatch.index;
+    // 找 dns 段的结束（下一个顶层 key）
+    let dnsEnd = clashOutput.length;
+    const topKeys = clashOutput.match(/^[a-zA-Z][a-zA-Z0-9_-]*:/gm);
+    for (const m of clashOutput.matchAll(/^[a-zA-Z][a-zA-Z0-9_-]*:/gm)) {
+      if (m.index > idx) { dnsEnd = m.index; break; }
+    }
+    const dnsBlock = clashOutput.slice(idx, dnsEnd);
+    // 检查 dns 段内是否已有 proxy-server-nameserver
+    const psnMatch = dnsBlock.match(/^(\s*)proxy-server-nameserver:/m);
+    if (psnMatch) {
+      // 已有 psn 列表 → 在其后追加（去重）
+      const psnIdx = dnsBlock.indexOf(psnMatch[0]);
+      let psnEnd = dnsBlock.length;
+      const psnInner = dnsBlock.slice(psnIdx + psnMatch[0].length);
+      const indentMatch = psnMatch[1].match(/^(\s*)/);
+      const psnIndent = indentMatch[1].length;
+      // 找 psn 子列表结束
+      const subLines = psnInner.split('\n');
+      let added = '';
+      for (const ln of subLines.slice(1)) {
+        const im = ln.match(/^(\s*)/);
+        if (!ln.trim() || im[1].length <= psnIndent || ln.trim().startsWith('#')) break;
+        added += ln + '\n';
+      }
+      // 已有项去重
+      const existing = new Set();
+      const exLines = dnsBlock.split('\n');
+      for (const ln of exLines) {
+        const lm = ln.match(/^\s*-\s*(\S.*)$/);
+        if (lm) existing.add(lm[1].trim());
+      }
+      const toAdd = list.filter(a => !existing.has(a));
+      if (toAdd.length === 0) return clashOutput;
+      const addBlock = '\n' + toAdd.map(a => ' '.repeat(psnIndent + 2) + '- ' + a).join('\n') + '\n';
+      // psnIdx 相对 dnsBlock, 需加回 dns 段全局偏移 idx
+      const insertAt = idx + psnIdx + psnMatch[0].length + added.length;
+      return clashOutput.slice(0, insertAt) + addBlock + clashOutput.slice(insertAt);
+    } else {
+      // dns 段内无 psn → 在 dns 段末尾追加 proxy-server-nameserver 子段
+      const indentMatch = dnsBlock.match(/^(\s*)\S/m);
+      const dnsIndent = indentMatch ? indentMatch[1].length : 0;
+      const addBlock = '  '.repeat(dnsIndent + 1) + 'proxy-server-nameserver:\n' +
+        list.map(a => '  '.repeat(dnsIndent + 2) + '- ' + a).join('\n') + '\n';
+      return clashOutput.slice(0, dnsEnd) + addBlock + clashOutput.slice(dnsEnd);
+    }
+  }
+  // 输出无 dns 段 → 构建完整 dns 段（原逻辑）
+  const lines = [];
+  lines.push('dns:');
+  lines.push('  enable: true');
+  lines.push('  proxy-server-nameserver:');
+  for (const addr of list) {
+    lines.push('    - ' + addr);
+  }
+  const dnsBlock = lines.join('\n') + '\n';
+  if (clashOutput.startsWith('proxies:')) {
+    return dnsBlock + clashOutput;
+  }
+  return dnsBlock + clashOutput;
 }
 
 function parseSubInfo(header) {
@@ -2217,7 +2627,7 @@ async function saveToClipAndTrack(text, ttl, env, uid, extra, maxAccess) {
 
   const id = await saveToClip(text, ttl, env, maxAccess, extra);
 
-  const clipUrl = ((env.CLIP_URL || '').replace(/\/+$/, '')) + '/share/' + id;
+  const clipUrl = (env._clipBase || '') + '/share/' + id;
 
   const entry = {
 
@@ -2306,7 +2716,36 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
       await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6\u8BA2\u9605...' });
 
-      const subResult = await fetchSub(uniqueUrls[0], uid, env);
+      const subResult = await fetchSub(uniqueUrls[0], uid, env, async (info) => {
+
+        // 拉取进度实时显示 (UA 尝试 / 反代)
+        try {
+
+          if (info.type === 'ua') {
+
+            const pct = Math.round(info.done * 100 / info.total);
+
+            const filled = Math.round(pct / 5);
+
+            const bar = '\u2593'.repeat(filled) + '\u2591'.repeat(20 - filled) + ' ' + info.done + '/' + info.total + ' ' + pct + '%';
+
+            let note = '\u23F3 \u5C1D\u8BD5 UA ' + info.done + '/' + info.total;
+
+            if (info.found > 0) note += ' \u00B7 \u2705 ' + info.found + ' \u8282\u70B9 (' + info.ua + ')';
+
+            else note += ' \u00B7 \u6682\u65E0\u7ED3\u679C';
+
+            await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6\u8BA2\u9605...\n' + bar + '\n\n' + note, parse_mode: 'HTML' }).catch(() => {});
+
+          } else if (info.type === 'proxy') {
+
+            await replyOrEdit(u, cid, env, { text: '\u{1F504} \u76F4\u8FDE\u5931\u8D25, \u8D70\u53CD\u4EE3...' }).catch(() => {});
+
+          }
+
+        } catch {}
+
+      });
 
       const subText = subResult.text;
 
@@ -2412,9 +2851,54 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
         await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6 [' + fetchedCount + '/' + uniqueUrls.length + ']' });
 
-        const results = await Promise.allSettled(
+        // 任务池: 并发拉取, 每个 URL 完成时更新进度消息
+        const results = new Array(batch.length);
 
-          batch.map(async (url) => {
+        const statusList = batch.map(url => ({ url, status: '\u23F3 \u7B49\u5F85' }));
+
+        let nextIdx = 0;
+
+        let doneCount = 0;
+
+        let lastRender = 0;
+
+        const renderProgress = async (force) => {
+
+          const now = Date.now();
+
+          if (!force && now - lastRender < 600) return;
+
+          lastRender = now;
+
+          const pct = Math.round(doneCount * 100 / batch.length);
+
+          const filled = Math.round(pct / 5);
+
+          const bar = '\u2593'.repeat(filled) + '\u2591'.repeat(20 - filled) + ' ' + doneCount + '/' + batch.length + ' ' + pct + '%';
+
+          const lines = statusList.map(s => {
+
+            const short = s.url.length > 45 ? s.url.slice(0, 45) + '\u2026' : s.url;
+
+            return s.status + ' ' + short;
+
+          }).join('\n');
+
+          await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6\u8BA2\u9605 ' + uniqueUrls.length + ' \u4E2A\n' + bar + '\n\n' + lines, parse_mode: 'HTML' }).catch(() => {});
+
+        };
+
+        const worker = async () => {
+
+          while (nextIdx < batch.length) {
+
+            const myIdx = nextIdx++;
+
+            const url = batch[myIdx];
+
+            statusList[myIdx].status = '\u23F3 \u62C9\u53D6\u4E2D...';
+
+            await renderProgress(false);
 
             let text = '';
 
@@ -2422,7 +2906,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
             // 自己域名的短链：直接从 KV 读取
 
-            const clipBase2 = (env.CLIP_URL || '').replace(/\/+$/, '');
+            const clipBase2 = env._clipBase || '';
 
             if (clipBase2 && url.startsWith(clipBase2 + '/share/')) {
 
@@ -2480,19 +2964,27 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
             }
 
-            return { url, text, usedUa };
+            results[myIdx] = { url, text, usedUa };
 
-          })
+            statusList[myIdx].status = text ? '\u2705 \u62C9\u53D6\u5B8C\u6210' : '\u274C \u65E0\u6570\u636E';
 
-        );
+            doneCount++;
+
+            await renderProgress(true);
+
+          }
+
+        };
+
+        await Promise.all(Array.from({ length: Math.min(PARALLEL_LIMIT, batch.length) }, worker));
 
         // 处理结果
 
         for (const r of results) {
 
-          if (r.status !== 'fulfilled') continue;
+          if (!r || !r.url) continue;
 
-          const { url, text, usedUa } = r.value;
+          const { url, text, usedUa } = r;
 
           if (!text) {
 
@@ -2524,11 +3016,12 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
           let parsed = null;
 
-          try { parsed = ProxyUtils.parse(text); } catch { parsed = null; }
+          // 完整解析链(含 Surge 配置), 避免 Surge 订阅在多订阅流程被判无有效节点
+          try { parsed = parseProxies(text); } catch {}
 
           if (!parsed || parsed.length === 0) {
 
-            try { const y = parseClashYaml(text); if (y.length > 0) parsed = y; } catch {}
+            try { parsed = ProxyUtils.parse(text); } catch {}
 
           }
 
@@ -2964,7 +3457,7 @@ async function onMsg(msg, env) {
 
     await env.KV.put('ulinks:' + uid, JSON.stringify(links));
 
-    const clipUrl = ((env.CLIP_URL || '').replace(/\/+$/, '')) + '/share/' + l.id;
+    const clipUrl = (env._clipBase || '') + '/share/' + l.id;
 
     const text = '\u2705 \u5DF2\u66F4\u65B0\u540D\u79F0\uFF1A' + escapeHTML(remark) + '\n\n' + linkStatusIcon(l) + ' <b>' + escapeHTML(l.preview) + '</b>\n\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
 
@@ -3024,7 +3517,7 @@ async function onMsg(msg, env) {
 
     await env.KV.put('ulinks:' + uid, JSON.stringify(links));
 
-    const clipUrl = ((env.CLIP_URL || '').replace(/\/+$/, '')) + '/share/' + newCode;
+    const clipUrl = (env._clipBase || '') + '/share/' + newCode;
 
     const text = '\u2705 \u77ED\u7801\u5DF2\u66F4\u65B0\uFF1A<code>' + escapeHTML(newCode) + '</code>\n\n' + linkStatusIcon(l) + ' <b>' + escapeHTML(l.preview) + '</b>\n\u{1F517} <code>' + escapeHTML(clipUrl) + '</code>';
 
@@ -3374,6 +3867,10 @@ async function onCb(q, env) {
 
   if (d === 'conv_toggle_burn') return cb_conv_toggle_burn(env, uid, cid, mid, u, d, q);
 
+  if (d === 'conv_toggle_check') return cb_conv_toggle_check(env, uid, cid, mid, u, d, q);
+
+  if (d.startsWith('alive_cancel:')) return cb_alive_cancel(env, uid, cid, mid, u, d, q);
+
   if (d === 'conv_toggle_landing') return cb_conv_toggle_landing(env, uid, cid, mid, u, d, q);
 
 
@@ -3667,6 +4164,9 @@ async function cb_collection_process(env, uid, cid, mid, u, d, q) {
       return editMsg(env, cid, mid, '\u274C 无法从收集的内容中解析出任何节点');
 
     }
+
+    // 保存原始输入文本（供 sing-box 私有 DNS 注入等使用）
+    u._lastSubInput = items.map(i => i.content || '').join('\n');
 
     // 去重
 
@@ -4032,7 +4532,7 @@ async function cb_link(env, uid, cid, mid, u, d, q) {
 
     }
 
-    const clipUrl = ((env.CLIP_URL || '').replace(/\/+$/, '')) + '/share/' + l.id;
+    const clipUrl = (env._clipBase || '') + '/share/' + l.id;
 
     // 读 KV 判断链接实际状态
 
@@ -4314,7 +4814,7 @@ async function cb_chg_ttl(env, uid, cid, mid, u, d, q) {
 
     if (l) {
 
-      const clipUrl = ((env.CLIP_URL || '').replace(/\/+$/, '')) + '/share/' + l.id;
+      const clipUrl = (env._clipBase || '') + '/share/' + l.id;
 
       let text = '\u{1F4CB} <b>\u77ED\u94FE\u8BE6\u60C5</b>\n\n';
 
@@ -4440,7 +4940,7 @@ async function cb_chg_acc(env, uid, cid, mid, u, d, q) {
 
     if (l) {
 
-      const clipUrl = ((env.CLIP_URL || '').replace(/\/+$/, '')) + '/share/' + l.id;
+      const clipUrl = (env._clipBase || '') + '/share/' + l.id;
 
       let text = '\u{1F4CB} <b>\u77ED\u94FE\u8BE6\u60C5</b>\n\n';
 
@@ -4609,6 +5109,30 @@ async function cb_acc_set(env, uid, cid, mid, u, d, q) {
 async function cb_conv_toggle_burn(env, uid, cid, mid, u, d, q) {
 
   u._burn = !u._burn;
+
+    return tg('editMessageReplyMarkup', env.BOT_TOKEN, {
+
+      chat_id: cid, message_id: mid,
+
+      reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
+
+    });
+
+}
+
+async function cb_conv_toggle_check(env, uid, cid, mid, u, d, q) {
+
+  u._checkAlive = !u._checkAlive;
+
+  await saveUserConfig(uid, env, { _checkAlive: u._checkAlive }).catch(() => {});
+
+  await tg('answerCallbackQuery', env.BOT_TOKEN, {
+
+    callback_query_id: q.id,
+
+    text: u._checkAlive ? '\u2705 \u6D4B\u6D3B\u8F93\u51FA\u5DF2\u5F00\u542F\uFF08\u4EC5\u8F93\u51FA\u5B58\u6D3B\u8282\u70B9\uFF09' : '\u6D4B\u6D3B\u8F93\u51FA\u5DF2\u5173\u95ED',
+
+  }).catch(() => {});
 
     return tg('editMessageReplyMarkup', env.BOT_TOKEN, {
 
@@ -4964,9 +5488,29 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
     }
 
+
+    // 测活输出开关: 开启时先测活, cron 分批执行, 完成后仅输出存活节点
+    if (u._checkAlive) {
+
+      return startAliveCheck(env, uid, cid, mid, u, fmt, fmtLabel);
+
+    }
+
+    // 标准转换输出（含私有 DNS 注入等）
+    return convertAndOutput(env, uid, cid, mid, u, fmt, u._lastProxies || [], {});
+
+}
+
+// ==================== 标准节点转换输出（供 cb_conv_fmt / 测活 cron 共用） ====================
+async function convertAndOutput(env, uid, cid, mid, u, fmt, proxies, opts) {
+
+  opts = opts || {};
+
+  const fmtLabel = FORMAT_OPTIONS.find((f) => f.id === fmt)?.label || fmt;
+
     // 非 gost 格式的标准节点转换
 
-    let proxiesForConvert = u._lastProxies || [];
+    let proxiesForConvert = proxies;
 
     // 输出时统一加旗帜 + 去同名
 
@@ -5253,8 +5797,24 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
               output = tmplLines.join('\n');
 
+              // __ALL_NODES__ 占位符 → 实际节点名（provider 架构模板内联化）
+              if (output.includes('__ALL_NODES__')) {
+
+                const nodeNames = (proxiesForConvert || []).map(p => '"' + String(p.name || '').replace(/"/g, '\\"') + '"').join(', ');
+
+                output = output.split('__ALL_NODES__').join(nodeNames);
+
+              }
+
             }
 
+          }
+
+          // 自定 YAML：订阅有私有 DNS 时，合并追加到模板 dns 段（不顶掉模板 DNS）
+          if (output && u._lastSubInput) {
+            try {
+              output = injectPrivateDnsClash(String(output), u._lastSubInput);
+            } catch { /* 注入失败不影响主流程 */ }
           }
 
         } catch {}
@@ -5441,11 +6001,24 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
       const extraUrls = [];
 
+      // sing-box 输出：注入机场私有 DNS（mihomo proxy-server-nameserver）
+      if (fmt === 'singbox' && output && u._lastSubInput) {
+        try {
+          output = injectPrivateDns(String(output), u._lastSubInput);
+        } catch { /* 注入失败不影响主流程 */ }
+      }
+      // Clash Meta (mihomo) 输出：补回 dns.proxy-server-nameserver 段
+      if ((fmt === 'clashmeta' || fmt === 'clash') && output && u._lastSubInput) {
+        try {
+          output = injectPrivateDnsClash(String(output), u._lastSubInput);
+        } catch { /* 注入失败不影响主流程 */ }
+      }
+
       const { id, url: clipUrl } = await saveToClipAndTrack(String(output), getEffectiveTtl(u), env, uid, {
 
-        preview: fmtLabel + ' · ' + u._lastProxies.length + ' 节点',
+        preview: fmtLabel + ' · ' + proxiesForConvert.length + ' 节点',
 
-        nodeCount: u._lastProxies.length, source: 'convert',
+        nodeCount: proxiesForConvert.length, source: 'convert',
 
         burn: u?._burn || false,
 
@@ -5527,7 +6100,8 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
 
       const flowT = resFlowName ? '\n\u{1F310} \u6B64\u94FE\u4FE1\u606F: ' + resFlowName : '';
 
-      let resText = '\u2705 <b>\u8F6C\u6362\u5B8C\u6210</b>\n\n\u{1F4CA} ' + u._lastProxies.length + ' \u8282\u70B9 \u2192 <b>' + fmtLabel + '</b>\n\n\u{1F517} <code>' + clipUrl + '</code>\n';
+      let resText = '\u2705 <b>\u8F6C\u6362\u5B8C\u6210</b>\n\n\u{1F4CA} ' + proxiesForConvert.length + ' \u8282\u70B9 \u2192 <b>' + fmtLabel + '</b>\n\n\u{1F517} <code>' + clipUrl + '</code>\n';
+      if (opts && opts.aliveText) resText = '\u2705 <b>\u8F6C\u6362\u5B8C\u6210</b>\n\n' + opts.aliveText + '\n\n\u{1F4CA} ' + proxiesForConvert.length + ' \u8282\u70B9 \u2192 <b>' + fmtLabel + '</b>\n\n\u{1F517} <code>' + clipUrl + '</code>\n';
 
       for (const e of extraUrls) resText += '\n' + e.text + '\n<code>' + e.url + '</code>\n';
 
@@ -5562,8 +6136,454 @@ async function cb_conv_fmt(env, uid, cid, mid, u, d, q) {
     }
 
     return;
+}
+
+
+
+// ==================== 测活输出（check-host.net TCP connect 批量探测） ====================
+
+function aliveTargets(proxies) {
+
+  const map = {};
+
+  const order = [];
+
+  for (let i = 0; i < proxies.length; i++) {
+
+    const p = proxies[i];
+
+    if (!p || !p.server || !p.port) continue;
+
+    const key = String(p.server) + ':' + Number(p.port);
+
+    if (!map[key]) { map[key] = { key, server: p.server, port: Number(p.port), idxs: [] }; order.push(key); }
+
+    map[key].idxs.push(i);
+
+  }
+
+  return { targets: order.map(k => map[k]) };
 
 }
+
+function aliveBar(done, total) {
+
+  const pct = total === 0 ? 0 : Math.max(0, Math.min(100, Math.round(done * 100 / total)));
+
+  const filled = Math.round(pct / 5);
+
+  return '\u2593'.repeat(filled) + '\u2591'.repeat(20 - filled) + ' ' + done + '/' + total + ' ' + pct + '%';
+
+}
+
+function aliveKb(taskId) {
+
+  return { inline_keyboard: [[{ text: '\u2716 \u53D6\u6D88\u6D4B\u6D3B', callback_data: 'alive_cancel:' + taskId }]] };
+
+}
+
+async function startAliveCheck(env, uid, cid, mid, u, fmt, fmtLabel) {
+
+  const proxies = u._lastProxies || [];
+
+  const { targets } = aliveTargets(proxies);
+
+  if (targets.length === 0) {
+
+    return tg('editMessageText', env.BOT_TOKEN, {
+
+      chat_id: cid, message_id: mid,
+
+      text: '\u274C \u6CA1\u6709\u53EF\u6D4B\u6D3B\u7684\u8282\u70B9\uFF08\u7F3A\u5C11 server/port\uFF09',
+
+      parse_mode: 'HTML', reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
+
+    });
+
+  }
+
+  // 快照转换上下文（cron 侧重建 u 用）
+
+  const snapshot = {
+
+    _proxies: proxies,
+
+    _clipBase: env._clipBase || null,
+
+    _lastSubInput: u._lastSubInput || null,
+
+    _burn: u?._burn || false,
+
+    _landing: u?._landing || false,
+
+    _convTtl: u._convTtl != null ? u._convTtl : null,
+
+    _convAccessLimit: u._convAccessLimit != null ? u._convAccessLimit : null,
+
+    _flowHeader: u._convFlowHeader || u._flowHeader || null,
+
+    _flowName: u._convFlowName || u._flowName || null,
+
+    _gostInput: u._gostInput || null,
+
+    _gostCount: u._gostCount || 0,
+
+    ttl: u.ttl != null ? u.ttl : 0,
+
+    _accessLimit: u._accessLimit != null ? u._accessLimit : 0,
+
+  };
+
+  const task = {
+
+    taskId: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+
+    uid, cid, mid, fmt, fmtLabel,
+
+    createdAt: Date.now(), updatedAt: Date.now(),
+
+    targets, results: {},
+
+    done: 0, total: targets.length, nodeCount: proxies.length,
+
+    status: 'running', snapshot,
+
+  };
+
+  await env.KV.put('alive:' + task.taskId, JSON.stringify(task));
+
+  return tg('editMessageText', env.BOT_TOKEN, {
+
+    chat_id: cid, message_id: mid,
+
+    text: '\u{1F52C} <b>\u6D4B\u6D3B\u8F93\u51FA\u5DF2\u5F00\u542F</b>\n\n\u8282\u70B9: ' + proxies.length + ' | \u76EE\u6807: ' + targets.length + '\n\n' + aliveBar(0, targets.length) + '\n\n\u23F3 \u6BCF\u6279\u6700\u591A 30 \u4E2A\u76EE\u6807, \u6BCF\u5206\u949F\u4E00\u6279, \u5B8C\u6210\u540E\u81EA\u52A8\u8F93\u51FA\u77ED\u94FE\uFF08\u4EC5\u5B58\u6D3B\u8282\u70B9\uFF09',
+
+    parse_mode: 'HTML',
+
+    reply_markup: aliveKb(task.taskId),
+
+  });
+
+}
+
+function isCloudflareIp(ip) {
+
+  // Cloudflare 内部 Anycast 网段（Workers SSRF 保护禁止连接, 用户实际可达, 探测时保留不误杀）
+  const parts = String(ip).split('.');
+
+  if (parts.length !== 4) return false;
+
+  const a = parseInt(parts[0]), b = parseInt(parts[1]);
+
+  if (a === 1 && (b === 0 || b === 1)) return true;
+
+  if (a === 104 && b >= 16 && b <= 31) return true;
+
+  if (a === 172 && b === 64) return true;
+
+  if (a === 141 && b === 101) return true;
+
+  if (a === 162 && b === 158) return true;
+
+  if (a === 173 && b === 245) return true;
+
+  if (a === 188 && b === 114) return true;
+
+  if (a === 190 && b === 93) return true;
+
+  if (a === 103 && (b === 21 || b === 22 || b === 31)) return true;
+
+  if (a === 198 && b === 41) return true;
+
+  if (a === 199 && b === 27) return true;
+
+  if (a === 197 && b === 234) return true;
+
+  return false;
+
+}
+
+function isHostname(s) {
+
+  // 非纯 IP 即为域名
+  return !/^\d+\.\d+\.\d+\.\d+$/.test(String(s || ''));
+
+}
+
+function isPrivateIp(ip) {
+
+  // 私网/回环/保留地址: 任何真实客户端都无法连接（机场节点绝不可能是这些地址）
+  const parts = String(ip).split('.');
+
+  if (parts.length !== 4) return false;
+
+  const a = parseInt(parts[0]), b = parseInt(parts[1]);
+
+  if (a === 0) return true;                         // 0.0.0.0/8
+
+  if (a === 10) return true;                        // 10.0.0.0/8
+
+  if (a === 127) return true;                       // 127.0.0.0/8 回环
+
+  if (a === 169 && b === 254) return true;          // 169.254.0.0/16 link-local
+
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+
+  if (a === 192 && b === 168) return true;          // 192.168.0.0/16
+
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
+
+  if (a >= 224) return true;                        // 组播/保留
+
+  return false;
+
+}
+
+function checkTcpDirect(server, port, timeoutMs) {
+
+  // CF Workers 原生 TCP connect（node:net），真实三次握手，不受外部 API 限流影响
+  const tmo = timeoutMs || 4000;
+
+  return new Promise((resolve) => {
+
+    const started = Date.now();
+
+    let settled = false;
+
+    let socket = null;
+
+    const done = (ok, time, blocked) => {
+
+      if (settled) return;
+
+      settled = true;
+
+      try { if (socket) socket.destroy(); } catch {}
+
+      resolve({ ok, time, blocked: !!blocked });
+
+    };
+
+    try {
+
+      socket = new net.Socket();
+
+      socket.setTimeout(tmo);
+
+      socket.once('connect', () => done(true, (Date.now() - started) / 1000, null));
+
+      socket.once('timeout', () => done(false, null, null));
+
+      socket.once('error', (e) => done(false, null, false));
+
+      socket.connect(Number(port), String(server));
+
+    } catch (e) {
+
+      done(false, null, false);
+
+    }
+
+  });
+
+}
+
+async function processAliveBatch(env, task) {
+
+  // retryOnce 的域名目标等待下一批重测
+  const pending = task.targets.filter(t => !(task.results[t.key] && !task.results[t.key].retryOnce));
+
+  if (pending.length === 0) return finishAliveCheck(env, task);
+
+  // 每批最多 30 个, 分 5 波 × 6 并发（CF 免费版同时最多 6 个等待响应头的连接, 每波 ≤4s）
+  const batch = pending.slice(0, 30);
+
+  for (let w = 0; w < batch.length; w += 6) {
+
+    const wave = batch.slice(w, w + 6);
+
+    // 地址分类: 私网/回环直接判死(任何客户端都连不上); CF 自家 IP 无法从 Workers 探测, 保留不误杀
+    const queries = await Promise.all(wave.map(t => {
+
+      if (isPrivateIp(t.server)) return { key: t.key, ok: false, time: null, blocked: false };
+
+      if (isCloudflareIp(t.server)) return { key: t.key, ok: false, time: null, blocked: true };
+
+      return checkTcpDirect(t.server, t.port).then(res => ({ key: t.key, ok: res.ok, time: res.time, blocked: res.blocked })).catch(() => ({ key: t.key, ok: false, time: null, blocked: false }));
+
+    }));
+
+    for (const q of queries) {
+
+      const prev = task.results[q.key];
+
+      if (prev && prev.retryOnce) {
+
+        // 重试结果为准
+        task.results[q.key] = { ok: !!q.ok, time: q.time, blocked: !!q.blocked };
+
+      } else if (!q.ok && !q.blocked && isHostname(q.key.split(':')[0])) {
+
+        // 域名探测失败(可能是 DNS/网络偶发), 标记重试一次
+        task.results[q.key] = { ok: false, time: null, blocked: false, retryOnce: true };
+
+      } else {
+
+        task.results[q.key] = { ok: !!q.ok, time: q.time, blocked: !!q.blocked };
+
+      }
+
+    }
+
+  }
+
+  task.done = Object.keys(task.results).filter(k => !task.results[k].retryOnce).length;
+
+  task.updatedAt = Date.now();
+
+  await env.KV.put('alive:' + task.taskId, JSON.stringify(task));
+
+  const bar = aliveBar(task.done, task.total);
+
+  await tg('editMessageText', env.BOT_TOKEN, {
+
+    chat_id: task.cid, message_id: task.mid,
+
+    text: '\u{1F52C} <b>\u6D4B\u6D3B\u8FDB\u884C\u4E2D</b>\n\n\u8282\u70B9: ' + task.nodeCount + ' | \u76EE\u6807: ' + task.total + '\n' + bar + '\n\n\u23F3 \u5DF2\u6D4B ' + task.done + ', \u5269\u4F59 ' + (task.total - task.done) + '...',
+
+    parse_mode: 'HTML', reply_markup: aliveKb(task.taskId),
+
+  }).catch(() => {});
+
+  if (task.done >= task.total) return finishAliveCheck(env, task);
+
+}
+
+async function finishAliveCheck(env, task) {
+
+  const all = task.snapshot._proxies || [];
+
+  const alive = [], dead = [];
+
+  for (const p of all) {
+
+    if (!p || !p.server || !p.port) { alive.push(p); continue; }
+
+    const key = String(p.server) + ':' + Number(p.port);
+
+    const r = task.results[key];
+
+    // blocked = CF 自家 Anycast IP(用户可达但 CF 测不了), 保留; 其余失败(含重试后仍失败)全部剔除
+    if (r && (r.ok || r.blocked)) alive.push(p); else dead.push(p);
+
+  }
+
+  task.status = 'done';
+
+  task.updatedAt = Date.now();
+
+  await env.KV.put('alive:' + task.taskId, JSON.stringify(task));
+
+  const u = Object.assign({}, task.snapshot);
+
+  delete u._proxies;
+
+  // cron 路径无 fetch 入口, 从任务快照恢复短链域名
+  if (task.snapshot._clipBase) env._clipBase = task.snapshot._clipBase;
+
+  const aliveText = '\u{1F52C} \u6D4B\u6D3B: ' + task.nodeCount + ' \u2192 ' + alive.length + ' \u5B58\u6D3B\uFF08' + dead.length + ' \u79BB\u7EBF\uFF09';
+
+  if (alive.length === 0) {
+
+    return tg('editMessageText', env.BOT_TOKEN, {
+
+      chat_id: task.cid, message_id: task.mid,
+
+      text: '\u274C <b>\u6D4B\u6D3B\u5B8C\u6210</b>\n\n' + aliveText + '\n\n\u6CA1\u6709\u5B58\u6D3B\u8282\u70B9, \u672A\u751F\u6210\u77ED\u94FE',
+
+      parse_mode: 'HTML', reply_markup: mainKb(),
+
+    });
+
+  }
+
+  await tg('editMessageText', env.BOT_TOKEN, {
+
+    chat_id: task.cid, message_id: task.mid,
+
+    text: '\u{1F52C} \u6D4B\u6D3B\u5B8C\u6210: ' + task.nodeCount + ' \u2192 ' + alive.length + ' \u5B58\u6D3B, \u6B63\u5728\u8F6C\u6362...',
+
+    parse_mode: 'HTML',
+
+  }).catch(() => {});
+
+  return convertAndOutput(env, task.uid, task.cid, task.mid, u, task.fmt, alive, { aliveText });
+
+}
+
+async function cb_alive_cancel(env, uid, cid, mid, u, d, q) {
+
+  const taskId = d.split(':')[1];
+
+  await env.KV.delete('alive:' + taskId).catch(() => {});
+
+  return tg('editMessageText', env.BOT_TOKEN, {
+
+    chat_id: cid, message_id: mid,
+
+    text: '\u2716 \u5DF2\u53D6\u6D88\u6D4B\u6D3B, \u8BF7\u91CD\u65B0\u9009\u62E9\u8F93\u51FA\u683C\u5F0F:',
+
+    parse_mode: 'HTML', reply_markup: fmtKb(null, u._convTtl, u.ttl, u),
+
+  });
+
+}
+
+async function processAliveQueue(env) {
+
+  const list = await env.KV.list({ prefix: 'alive:' }).catch(() => null);
+
+  if (!list || !list.keys || list.keys.length === 0) return;
+
+  let best = null;
+
+  for (const k of list.keys) {
+
+    if (k.name === 'alive:lock') continue;
+
+    const t = await env.KV.get(k.name, { type: 'json' }).catch(() => null);
+
+    if (!t || t.status !== 'running') continue;
+
+    if (!best || t.createdAt < best.createdAt) best = t;
+
+  }
+
+  if (!best) return;
+
+  if (Date.now() - best.createdAt > 60 * 60 * 1000) {
+
+    best.status = 'error';
+
+    await env.KV.put('alive:' + best.taskId, JSON.stringify(best));
+
+    return tg('editMessageText', env.BOT_TOKEN, {
+
+      chat_id: best.cid, message_id: best.mid,
+
+      text: '\u274C \u6D4B\u6D3B\u8D85\u65F6\uFF08\u8D85\u8FC7 60 \u5206\u949F\uFF09, \u5DF2\u7EC8\u6B62\u3002\u8BF7\u91CD\u65B0\u53D1\u8D77\u3002',
+
+      parse_mode: 'HTML', reply_markup: mainKb(),
+
+    }).catch(() => {});
+
+  }
+
+  return processAliveBatch(env, best);
+
+}
+
+
 
 // ==================== YAML 模板管理 ====================
 
@@ -5981,13 +7001,78 @@ async function cb_flow_del(env, uid, cid, mid, u, d, q) {
 
   // ==================== Worker 入口 ====================
 
+// 自动激活 webhook + 注册命令(webhook 路径统一 /webhookbot)
+async function setupWebhook(env, base) {
+
+  const result = { webhook: false, commands: false };
+
+  if (!env.BOT_TOKEN) return result;
+
+  try {
+
+    const wh = base + '/webhookbot';
+
+    const params = { url: wh };
+
+    if (env.WEBHOOK_SECRET) params.secret_token = env.WEBHOOK_SECRET;
+
+    const r1 = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook`, {
+
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
+
+    });
+
+    result.webhook = (await r1.json()).ok === true;
+
+    const r2 = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setMyCommands`, {
+
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+
+      body: JSON.stringify({ commands: [{ command: 'start', description: '启动 / 主页' }] }),
+
+    });
+
+    result.commands = (await r2.json()).ok === true;
+
+  } catch (e) { result.error = e.message; }
+
+  return result;
+
+}
+
 export default {
+
+  // ===== 测活调度：每分钟处理一个测活任务的一批（check-host TCP connect） =====
+  async scheduled(event, env, ctx) {
+
+    const lock = await env.KV.get('alive:lock').catch(() => null);
+
+    if (lock) return;
+
+    await env.KV.put('alive:lock', '1', { expirationTtl: 50 }).catch(() => {});
+
+    try {
+
+      await processAliveQueue(env);
+
+    } catch { /* 单批失败不影响后续 */ }
+
+    finally {
+
+      await env.KV.delete('alive:lock').catch(() => {});
+
+    }
+
+  },
 
   async fetch(request, env, ctx) {
 
     const url = new URL(request.url);
 
     const path = url.pathname;
+
+    // 短链域名: CLIP_URL 可选覆盖(向后兼容), 默认 worker 自身域名(webhook 回调域名)
+    env._clipBase = (env.CLIP_URL || '').replace(/\/+$/, '') || url.origin;
 
     const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
 
@@ -6025,7 +7110,7 @@ export default {
 
         const id = await saveToClip(body, 86400, env);
 
-        const clipUrl = ((env.CLIP_URL || '').replace(/\/+$/, '')) + '/share/' + id;
+        const clipUrl = (env._clipBase || '') + '/share/' + id;
 
         return new Response(JSON.stringify({ success: true, id, url: clipUrl }), { headers: { 'Content-Type': 'application/json', ...cors } });
 
@@ -6339,7 +7424,38 @@ export default {
 
     // Telegram Webhook
 
-    if (path === '/webhook' && request.method === 'POST') {
+    // /webhookbot: 浏览器访问即自动激活(拼接 BOT_TOKEN + setWebhook)
+    if (path === '/webhookbot' && request.method === 'GET') {
+
+      const setupResult = await setupWebhook(env, url.origin);
+
+      return new Response(
+
+        JSON.stringify({
+
+          service: 'sub-store-bot',
+
+          version: '3.0',
+
+          bot: typeof env.BOT_TOKEN !== 'undefined',
+
+          clipUrl: env._clipBase || '',
+
+          webhook: setupResult.webhook ? '✅ 已激活' : '❌ 未激活',
+
+          commands: setupResult.commands ? '✅ 已注册' : '⚠️ 未注册',
+
+          setupError: setupResult.error || null,
+
+        }, null, 2),
+
+        { headers: { 'Content-Type': 'application/json; charset=utf-8', ...cors } }
+
+      );
+
+    }
+
+if ((path === '/webhook' || path === '/webhookbot') && request.method === 'POST') {
 
       const body = await request.json();
 
@@ -6523,57 +7639,8 @@ export default {
 
     if (url.pathname === '/') {
 
-      if (env.CLIP_URL) return Response.redirect('https://www.google.com', 302);
-
-      const setupResult = { webhook: false, commands: false };
-
-      if (env.BOT_TOKEN) {
-
-        try {
-
-          const wh = `${url.protocol}//${url.hostname}/webhook`;
-
-          const params = { url: wh };
-
-          if (env.WEBHOOK_SECRET) params.secret_token = env.WEBHOOK_SECRET;
-
-          const r1 = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook`, {
-
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
-
-          });
-
-          setupResult.webhook = (await r1.json()).ok === true;
-
-          const r2 = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setMyCommands`, {
-
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-
-            body: JSON.stringify({ commands: [{ command: 'start', description: '启动 / 主页' }] }),
-
-          });
-
-          setupResult.commands = (await r2.json()).ok === true;
-
-        } catch (e) { setupResult.error = e.message; }
-
-      }
-
-      return new Response(JSON.stringify({
-
-        service: 'sub-store-bot', version: '3.0',
-
-        bot: typeof env.BOT_TOKEN !== 'undefined',
-
-        clipUrl: env.CLIP_URL || '',
-
-        webhook: setupResult.webhook ? '✅ 已激活' : '❌ 未激活',
-
-        commands: setupResult.commands ? '✅ 已注册' : '⚠️ 未注册',
-
-        setupError: setupResult.error || null,
-
-      }, null, 2), { headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+      // 根路由无条件跳 google 防泄露; 激活只走 /webhookbot
+      return Response.redirect('https://www.google.com', 302);
 
     }
 
@@ -6581,53 +7648,7 @@ export default {
 
     if (url.pathname === '/setup') {
 
-      const setupResult = { webhook: false, commands: false };
-
-      if (env.BOT_TOKEN) {
-
-        try {
-
-          const wh = `${url.protocol}//${url.hostname}/webhook`;
-
-          const whParams = { url: wh };
-
-          if (env.WEBHOOK_SECRET) whParams.secret_token = env.WEBHOOK_SECRET;
-
-          const r1 = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook`, {
-
-            method: 'POST',
-
-            headers: { 'Content-Type': 'application/json' },
-
-            body: JSON.stringify(whParams),
-
-          });
-
-          setupResult.webhook = (await r1.json()).ok === true;
-
-          const r2 = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setMyCommands`, {
-
-            method: 'POST',
-
-            headers: { 'Content-Type': 'application/json' },
-
-            body: JSON.stringify({
-
-              commands: [
-
-                { command: 'start', description: '启动 / 主页' },
-
-              ],
-
-            }),
-
-          });
-
-          setupResult.commands = (await r2.json()).ok === true;
-
-        } catch (e) { setupResult.error = e.message; }
-
-      }
+      const setupResult = await setupWebhook(env, url.origin);
 
       return new Response(
 
@@ -6639,7 +7660,7 @@ export default {
 
           bot: typeof env.BOT_TOKEN !== 'undefined',
 
-          clipUrl: env.CLIP_URL || '',
+          clipUrl: env._clipBase || '',
 
           engine: 'Sub-Store',
 
@@ -6671,7 +7692,7 @@ export default {
 
         bot: typeof env.BOT_TOKEN !== 'undefined',
 
-        clipUrl: env.CLIP_URL || '',
+        clipUrl: env._clipBase || '',
 
         engine: 'Sub-Store',
 
