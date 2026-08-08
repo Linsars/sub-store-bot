@@ -11,9 +11,9 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 | 类别 | 功能 | 说明 |
 |------|------|------|
 | **输入** | 远程订阅 / 本地订阅 / 多订阅合并 / 反代 | 发 URL 或文件，7 种 UA 轮询拉取（可自定义），PROXY_URL 绕过 CF 拉取拦截，同对话多条自动去重合并 |
-| **输出** | 13 种格式 + Snell + 双链 | Clash Meta、URI、JSON、V2Ray、sing-box、Surfboard、QX、Shadowrocket、Surge、Loon、Stash、Egern、Base64；Snell 节点完整支持（Surge 格式 parser 增强）；WG 节点和 Gost 节点独立侧链输出 |
+| **输出** | 14 种格式 / Snell / 双链 | Clash Meta、URI、JSON、V2Ray、sing-box、Surfboard、QX、Shadowrocket、Surge、Loon、Stash、Egern、Base64；Snell 节点完整支持（Surge 格式 parser 增强）；WG 节点和 Gost 节点独立侧链输出 ;自定义yaml规则集 |
 | **YAML 模板** | 仓库模板 + 用户自定义 | 把自己配置清掉 proxies 段丢到 `landing/`（支持 `.ini`/`.yaml`/`.yml`）；编辑 `templates.json`，file 后面填仓库文件名，name 是 bot 显示的，多配置模板英文逗号隔开。设定 `LANDING_DIR` 变量后，bot 内 **同步仓库** 开启 |
-| **处理** | 去同名上标 + 智能去重 | 同名节点自动上标（²³…），基于 server:port:type:uuid:sni:path:network 特征去重 |
+| **处理** | 去同名上标 / 智能去重 / 测活 | 同名节点自动上标（²³…），基于 server:port:type:uuid:sni:path:network 特征去重， 测活才用CF原生TCP connect测活 |
 | **短链** | 有效期 / 阅后即焚 / 梅开二度 / 管理 | IP 独立计数访问限制，过期/焚毁自动销毁；落地页反向代理可自定义 HTML |
 | **安全** | SSRF 防护 / TG 限流 / 配置持久化 / 调试 | SSRF 防护（LANDING_DIR 仅 GitHub）；TG 限流 30s/5 次；Webhook 校验；配置落 KV 升级不丢；DEBUG_TOKEN 鉴权端点 |
 
