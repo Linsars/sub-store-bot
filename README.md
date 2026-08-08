@@ -27,7 +27,7 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
 部署完成后：
 
 1. 去 **域** 页面，打开域名路由或绑定自定义域名（可选）
-2. 去 **变量与密钥** 页面，添加环境变量，类型全部选 **密钥** ：
+2. 去 **变量与密钥** 页面，添加环境变量，类型全部选 **密钥** （防止更新被覆盖变量） ：
    - `ALLOWED_USERS` = 白名单ID（可选，逗号分隔），不设则公开使用，也可以只设自己的TGid
    - `BOT_TOKEN` = Telegram Bot Token
    - `PROXY_URL` = 反代地址，绕过 CF 拦截（可选，[搭建教程](landing/proxy-setup.md)）。若反代启用了 token 鉴权，格式为 `https://你的项目名.vercel.app/api?token=你的TOKEN`（bot 会自动补 `url=` 前缀，无需手动拼 `&` 或 `url=`）
