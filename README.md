@@ -32,8 +32,9 @@ Telegram Bot — 订阅转换 + 短链分享，内置完整 Sub-Store 引擎。
    - `BOT_TOKEN` = Telegram Bot Token
    - `PROXY_URL` = 反代地址，绕过 CF 拦截（可选，[搭建教程](landing/proxy-setup.md)）。若反代启用了 token 鉴权，格式为 `https://你的项目名.vercel.app/api?token=你的TOKEN`（bot 会自动补 `url=` 前缀，无需手动拼 `&` 或 `url=`）
    - `LANDING_DIR` = 落地页和模板目录（可选，复制目录页地址删掉 `tree`，如 `https://github.com/Linsars/sub-store-bot/main/landing`）
-3. 去 **描述** 页面，复制 Worker 域名并在后面加上webhookbot到浏览器地址栏回车激活 bot如：`https://xxx.workers.dev/webhookbot`
-4. Telegram 里发 `/start`
+3. 在 **触发事件** 段，添加 **Cron触发器** 里面的 **计划** 改成 **1** 添加（这一步是给测活用的，如果你不想用测活功能可以不设置）
+4. 去 **描述** 页面，复制 Worker 域名并在后面加上webhookbot到浏览器地址栏回车激活 bot如：`https://xxx.workers.dev/webhookbot`
+5. Telegram 里发 `/start`
 
 ## 环境变量
 
