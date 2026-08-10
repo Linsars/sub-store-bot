@@ -52,6 +52,34 @@ dns:
     - 'time.*.apple.com'
     - '*.parsec.app'
     - '*.parsecgaming.com'
+    #tigr
+    - '+.tx.bilibili.com'
+    #bit
+    - '+.bnsepserv.com'
+    #ikuu
+    - '+.apon'
+    - '+.quest'
+    - '+.art'
+    #花云
+    - '+.apt-agent.com'
+    #ytoo
+    - '+.88223163.xyz'
+    #良心
+    - '+.liangxin1.xyz'
+    #飞猪
+    - '+.fzvip1.com'
+    - '+.fzvip.cc'
+    #eix
+    - '+.eixcloud.com'
+    #boost
+    - '+.myzxdy.top'
+    #西数
+    - '+.micron-qwer.com'
+    #小姨
+    - '+.huaweiyouxuan.com'
+    - '+.knhqf.com'
+    #三毛
+    - '+.aikunapp.com'
   prefer-h3: false
   use-hosts: true
   use-system-hosts: true
@@ -61,8 +89,19 @@ dns:
   nameserver-policy:
     "+.cloud-nodes.com":
       - 124.221.68.73:1053
+    #墙洞
     "*.oix_nodes.com":
       - 124.221.68.73:1053
+    #tigr
+    "+.tx.bilibili.com":
+      - https://47.75.114.187/dns-query
+    #ikuuu
+    "+.qpon":
+      - tcp://2dd5f03cce3347f46dbf50d34e175a2e73b2b5ba.9fe06a.fyi:8080
+    "+.quest":
+      - tcp://2dd5f03cce3347f46dbf50d34e175a2e73b2b5ba.9fe06a.fyi:8080
+    "+.art":
+      - tcp://2dd5f03cce3347f46dbf50d34e175a2e73b2b5ba.9fe06a.fyi:8080
     "geosite:cn,private":
       - 223.5.5.5
       - 119.29.29.29
