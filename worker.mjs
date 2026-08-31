@@ -27,7 +27,7 @@
 import { ProxyUtils } from './proxy-utils.esm.js';
 import net from 'node:net';
 
-const BOT_VERSION = '2.36.17';
+const BOT_VERSION = '2.36.23';
 
 // ==================== 工具函数 ====================
 
@@ -57,6 +57,11 @@ async function tg(method, token, body) {
 
   try {
 
+    // 10 秒超时: 防止 TG API 卡死阻塞整个流程(如进度编辑卡住拉取)
+    const ctrl = new AbortController();
+
+    const tgTimer = setTimeout(() => ctrl.abort(), 10000);
+
     const r = await fetch('https://api.telegram.org/bot' + token + '/' + method, {
 
       method: 'POST',
@@ -65,7 +70,11 @@ async function tg(method, token, body) {
 
       body: JSON.stringify(body),
 
+      signal: ctrl.signal,
+
     });
+
+    clearTimeout(tgTimer);
 
     const ct = (r.headers.get('content-type') || '').toLowerCase();
 
@@ -1746,7 +1755,7 @@ async function fetchSub(url, uid, env, progress) {
     const id = url.split('/share/')[1]?.split(/[?#]/)[0];
     if (id) {
 
-      if (progress) await progress({ type: 'kv' });
+      if (progress) await Promise.race([progress({ type: 'kv' }).catch(() => {}), new Promise(r => setTimeout(r, 5000))]);
 
       const kvData = await env.KV.get('share_' + id, { type: 'json' }).catch(() => null);
       if (kvData && kvData.text) {
@@ -1767,6 +1776,7 @@ async function fetchSub(url, uid, env, progress) {
   let bestUa = '';
 
   let bestCount = 0;
+
 
   let bestParsed = null;
 
@@ -1847,8 +1857,9 @@ async function fetchSub(url, uid, env, progress) {
 
   
 
+
     // 批次进度报告
-    if (progress) await progress({ type: 'ua', done: Math.min(batchStart + BATCH_SIZE, uaList.length), total: uaList.length, found: bestCount, ua: bestUa });
+    if (progress) await Promise.race([progress({ type: 'ua', done: Math.min(batchStart + BATCH_SIZE, uaList.length), total: uaList.length, found: bestCount, ua: bestUa }).catch(() => {}), new Promise(r => setTimeout(r, 5000))]);
 
 }
 
@@ -1856,7 +1867,7 @@ async function fetchSub(url, uid, env, progress) {
 
   if (!bestText && env.PROXY_URL) {
 
-    if (progress) await progress({ type: 'proxy' });
+    if (progress) await Promise.race([progress({ type: 'proxy' }).catch(() => {}), new Promise(r => setTimeout(r, 5000))]);
 
     try {
 
@@ -2683,7 +2694,8 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
   const totalInputUrls = urls.length;
 
-  const uniqueUrls = [...new Set(urls)];
+  // URL 归一化: 去掉末尾 / 避免相同链接被当两条
+        const uniqueUrls = [...new Set(urls.map(u => u.replace(/\/+$/, '')))];
 
   if (uniqueUrls.length === 0) {
 
@@ -2716,7 +2728,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
       await replyOrEdit(u, cid, env, { text: '\u{1F504} \u6B63\u5728\u62C9\u53D6\u8BA2\u9605...' });
 
-      const subResult = await fetchSub(uniqueUrls[0], uid, env, async (info) => {
+      const fetchWithTimeout = fetchSub(uniqueUrls[0], uid, env, async (info) => {
 
         // 拉取进度实时显示 (UA 尝试 / 反代)
         try {
@@ -2746,6 +2758,12 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
         } catch {}
 
       });
+
+      // 加 10 分钟超时, 防止单条拉取卡死
+      const subResult = await Promise.race([
+        fetchWithTimeout,
+        new Promise(r => setTimeout(() => r({ text: null, ua: null }), 600000)),
+      ]);
 
       const subText = subResult.text;
 
@@ -6250,7 +6268,7 @@ async function startAliveCheck(env, uid, cid, mid, u, fmt, fmtLabel) {
 
   };
 
-  await env.KV.put('alive:' + task.taskId, JSON.stringify(task));
+  await env.KV.put('alive:' + task.taskId, JSON.stringify(task), { expirationTtl: 7200 });
 
   return tg('editMessageText', env.BOT_TOKEN, {
 
@@ -6441,7 +6459,7 @@ async function processAliveBatch(env, task) {
 
   task.updatedAt = Date.now();
 
-  await env.KV.put('alive:' + task.taskId, JSON.stringify(task));
+  await env.KV.put('alive:' + task.taskId, JSON.stringify(task), { expirationTtl: 7200 });
 
   const bar = aliveBar(task.done, task.total);
 
@@ -6482,7 +6500,7 @@ async function finishAliveCheck(env, task) {
 
   task.updatedAt = Date.now();
 
-  await env.KV.put('alive:' + task.taskId, JSON.stringify(task));
+  await env.KV.put('alive:' + task.taskId, JSON.stringify(task), { expirationTtl: 7200 });
 
   const u = Object.assign({}, task.snapshot);
 
@@ -6539,6 +6557,28 @@ async function cb_alive_cancel(env, uid, cid, mid, u, d, q) {
 
 }
 
+// 检查是否有 running 状态的测活任务(只 list+抽样读, 供 cron 提前退出)
+async function hasRunningAliveTask(env) {
+
+  const list = await env.KV.list({ prefix: 'alive:' }).catch(() => null);
+
+  if (!list || !list.keys) return false;
+
+  for (const k of list.keys) {
+
+    if (k.name === 'alive:lock') continue;
+
+    // key 带元数据? KV list 不返回内容, 需读一个判断 — 读第一个非 lock key 即可
+    const t = await env.KV.get(k.name, { type: 'json' }).catch(() => null);
+
+    if (t && t.status === 'running') return true;
+
+  }
+
+  return false;
+
+}
+
 async function processAliveQueue(env) {
 
   const list = await env.KV.list({ prefix: 'alive:' }).catch(() => null);
@@ -6565,7 +6605,7 @@ async function processAliveQueue(env) {
 
     best.status = 'error';
 
-    await env.KV.put('alive:' + best.taskId, JSON.stringify(best));
+    await env.KV.put('alive:' + best.taskId, JSON.stringify(best), { expirationTtl: 7200 });
 
     return tg('editMessageText', env.BOT_TOKEN, {
 
@@ -7045,9 +7085,18 @@ export default {
   // ===== 测活调度：每分钟处理一个测活任务的一批（check-host TCP connect） =====
   async scheduled(event, env, ctx) {
 
+    // 先检查是否有 running 任务: 没有 → 直接 return, 不写 lock(省写额度)
     const lock = await env.KV.get('alive:lock').catch(() => null);
 
     if (lock) return;
+
+    try {
+
+      const hasTask = await hasRunningAliveTask(env);
+
+      if (!hasTask) return;
+
+    } catch {}
 
     await env.KV.put('alive:lock', '1', { expirationTtl: 50 }).catch(() => {});
 
@@ -7400,13 +7449,14 @@ export default {
 
       const isNewIP = !accessedIPs.includes(clientIP);
 
-      const kvOpts = ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {};
+      // 只在新 IP 时写入(旧逻辑 maxIPs>0 时每次访问都写, 幂等写烧穿 KV 额度)
+      if (isNewIP) {
 
-      if (isNewIP || maxIPs > 0) {
+        const kvOpts = ttl > 0 ? { expirationTtl: ttl < 60 ? 60 : ttl } : {};
 
         ctx.waitUntil(env.KV.put('share_' + id,
 
-          JSON.stringify({ ...raw, accessedIPs: isNewIP ? [...accessedIPs, clientIP] : accessedIPs }),
+          JSON.stringify({ ...raw, accessedIPs: [...accessedIPs, clientIP] }),
 
           kvOpts
 
