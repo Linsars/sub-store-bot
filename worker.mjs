@@ -27,7 +27,7 @@
 import { ProxyUtils } from './proxy-utils.esm.js';
 import net from 'node:net';
 
-const BOT_VERSION = '2.36.23';
+const BOT_VERSION = '2.36.24';
 
 // ==================== 工具函数 ====================
 
@@ -6270,6 +6270,9 @@ async function startAliveCheck(env, uid, cid, mid, u, fmt, fmtLabel) {
 
   await env.KV.put('alive:' + task.taskId, JSON.stringify(task), { expirationTtl: 7200 });
 
+  // 指针 key: scheduled 每分钟 get 这个(读额度)即可, 不用 list(独立额度)
+  await env.KV.put('alive:running', task.taskId, { expirationTtl: 7200 }).catch(() => {});
+
   return tg('editMessageText', env.BOT_TOKEN, {
 
     chat_id: cid, message_id: mid,
@@ -6502,6 +6505,9 @@ async function finishAliveCheck(env, task) {
 
   await env.KV.put('alive:' + task.taskId, JSON.stringify(task), { expirationTtl: 7200 });
 
+  // 清指针: scheduled 每分钟 get 到 null 就直接 return, 不再 list
+  await env.KV.delete('alive:running').catch(() => {});
+
   const u = Object.assign({}, task.snapshot);
 
   delete u._proxies;
@@ -6545,6 +6551,8 @@ async function cb_alive_cancel(env, uid, cid, mid, u, d, q) {
 
   await env.KV.delete('alive:' + taskId).catch(() => {});
 
+  await env.KV.delete('alive:running').catch(() => {});
+
   return tg('editMessageText', env.BOT_TOKEN, {
 
     chat_id: cid, message_id: mid,
@@ -6557,55 +6565,86 @@ async function cb_alive_cancel(env, uid, cid, mid, u, d, q) {
 
 }
 
-// 检查是否有 running 状态的测活任务(只 list+抽样读, 供 cron 提前退出)
-async function hasRunningAliveTask(env) {
+// 读指针 key 取当前 running 任务(get 走 read 额度, 避免每分钟 list 烧 list 额度)
+// 指针悬空(任务 key 已过期)时清理并 fallback 扫描一次
+async function getRunningTaskId(env) {
 
-  const list = await env.KV.list({ prefix: 'alive:' }).catch(() => null);
+  const tid = await env.KV.get('alive:running').catch(() => null);
 
-  if (!list || !list.keys) return false;
+  if (tid) {
 
-  for (const k of list.keys) {
+    const t = await env.KV.get('alive:' + tid, { type: 'json' }).catch(() => null);
 
-    if (k.name === 'alive:lock') continue;
+    if (t && t.status === 'running') return tid;
 
-    // key 带元数据? KV list 不返回内容, 需读一个判断 — 读第一个非 lock key 即可
-    const t = await env.KV.get(k.name, { type: 'json' }).catch(() => null);
-
-    if (t && t.status === 'running') return true;
+    // 指针悬空: 清掉
+    await env.KV.delete('alive:running').catch(() => {});
 
   }
 
-  return false;
+  // fallback: 兼容旧指针缺失(部署过渡期)的兜底扫描, 命中后写新指针
+  const list = await env.KV.list({ prefix: 'alive:' }).catch(() => null);
+
+  if (!list || !list.keys) return null;
+
+  for (const k of list.keys) {
+
+    if (k.name === 'alive:lock' || k.name === 'alive:running') continue;
+
+    const t = await env.KV.get(k.name, { type: 'json' }).catch(() => null);
+
+    if (t && t.status === 'running') {
+
+      await env.KV.put('alive:running', t.taskId, { expirationTtl: 7200 }).catch(() => {});
+
+      return t.taskId;
+
+    }
+
+  }
+
+  return null;
 
 }
 
-async function processAliveQueue(env) {
-
-  const list = await env.KV.list({ prefix: 'alive:' }).catch(() => null);
-
-  if (!list || !list.keys || list.keys.length === 0) return;
+// 有 taskId 直取(省 list); 无则 fallback 扫描
+async function processAliveQueue(env, taskId) {
 
   let best = null;
 
-  for (const k of list.keys) {
+  if (taskId) {
 
-    if (k.name === 'alive:lock') continue;
+    best = await env.KV.get('alive:' + taskId, { type: 'json' }).catch(() => null);
 
-    const t = await env.KV.get(k.name, { type: 'json' }).catch(() => null);
+  } else {
 
-    if (!t || t.status !== 'running') continue;
+    const list = await env.KV.list({ prefix: 'alive:' }).catch(() => null);
 
-    if (!best || t.createdAt < best.createdAt) best = t;
+    if (!list || !list.keys || list.keys.length === 0) return;
+
+    for (const k of list.keys) {
+
+      if (k.name === 'alive:lock' || k.name === 'alive:running') continue;
+
+      const t = await env.KV.get(k.name, { type: 'json' }).catch(() => null);
+
+      if (!t || t.status !== 'running') continue;
+
+      if (!best || t.createdAt < best.createdAt) best = t;
+
+    }
 
   }
 
-  if (!best) return;
+  if (!best || best.status !== 'running') return;
 
   if (Date.now() - best.createdAt > 60 * 60 * 1000) {
 
     best.status = 'error';
 
     await env.KV.put('alive:' + best.taskId, JSON.stringify(best), { expirationTtl: 7200 });
+
+    await env.KV.delete('alive:running').catch(() => {});
 
     return tg('editMessageText', env.BOT_TOKEN, {
 
@@ -7090,19 +7129,22 @@ export default {
 
     if (lock) return;
 
+    // get 指针(走 read 额度)替代每分钟 list(独立 list 额度只有 1000/天)
+    let taskId = null;
+
     try {
 
-      const hasTask = await hasRunningAliveTask(env);
-
-      if (!hasTask) return;
+      taskId = await getRunningTaskId(env);
 
     } catch {}
+
+    if (!taskId) return;
 
     await env.KV.put('alive:lock', '1', { expirationTtl: 50 }).catch(() => {});
 
     try {
 
-      await processAliveQueue(env);
+      await processAliveQueue(env, taskId);
 
     } catch { /* 单批失败不影响后续 */ }
 
