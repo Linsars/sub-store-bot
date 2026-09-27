@@ -27,7 +27,7 @@
 import { ProxyUtils } from './proxy-utils.esm.js';
 import net from 'node:net';
 
-const BOT_VERSION = '2.36.26';
+const BOT_VERSION = '2.36.27';
 
 // ==================== 工具函数 ====================
 
@@ -1871,7 +1871,7 @@ async function fetchSub(url, uid, env, progress) {
 
     if (bestText) break;
 
-    if (progress) await Promise.race([progress({ type: 'proxy' }).catch(() => {}), new Promise(r => setTimeout(r, 5000))]);
+    if (progress) await Promise.race([progress({ type: 'proxy', which: oneProxy }).catch(() => {}), new Promise(r => setTimeout(r, 5000))]);
 
     try {
 
@@ -1903,7 +1903,7 @@ async function fetchSub(url, uid, env, progress) {
 
             bestText = proxyText;
 
-            bestUa = 'proxy';
+            bestUa = String(oneProxy).includes('/t5') ? 'T5节点' : 'proxy';
 
             bestCount = count;
 
@@ -2755,7 +2755,10 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
           } else if (info.type === 'proxy') {
 
-            await replyOrEdit(u, cid, env, { text: '\u{1F504} \u76F4\u8FDE\u5931\u8D25, \u8D70\u53CD\u4EE3...' }).catch(() => {});
+            // 标注当前在试哪个反代(区分旧反代 / T5 节点)
+            const which = info.which ? String(info.which).replace(/https?:\/\//, '').split(/[?\/]/)[0] : '';
+            const isT5 = String(info.which || '').includes('/t5');
+            await replyOrEdit(u, cid, env, { text: '🔄 直连失败, 走反代...\n\n' + (isT5 ? '🌐 T5 节点: ' : '🔁 反代: ') + which, parse_mode: 'HTML' }).catch(() => {});
 
           }
 
@@ -2773,7 +2776,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
       u._lastUrlCount = 1;
 
-      u._lastFetchUa = subResult.ua === 'proxy' ? '\u53CD\u4EE3 (Karing)' : subResult.ua;
+      u._lastFetchUa = subResult.ua === 'proxy' ? '\u53CD\u4EE3 (Karing)' : (subResult.ua === 'T5\u8282\u70B9' ? 'T5\u8282\u70B9' : subResult.ua);
 
       // HTML <pre> 提取
 
@@ -2829,7 +2832,7 @@ async function processRemoteUrls(urls, cid, uid, u, env) {
 
         }
 
-        usedUas.push(uniqueUrls[0] + ' \u2192 ' + (subResult.ua === 'proxy' ? '\u53CD\u4EE3(Karing)' : subResult.ua) + ' \u2192 ' + parsed.length + siLine);
+        usedUas.push(uniqueUrls[0] + ' \u2192 ' + (subResult.ua === 'proxy' ? '\u53CD\u4EE3' : (subResult.ua === 'T5\u8282\u70B9' ? 'T5\u8282\u70B9' : subResult.ua)) + ' \u2192 ' + parsed.length + siLine);
 
       } else {
 
