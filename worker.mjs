@@ -27,7 +27,7 @@
 import { ProxyUtils } from './proxy-utils.esm.js';
 import net from 'node:net';
 
-const BOT_VERSION = '2.36.24';
+const BOT_VERSION = '2.36.25';
 
 // ==================== 工具函数 ====================
 
@@ -6571,37 +6571,15 @@ async function getRunningTaskId(env) {
 
   const tid = await env.KV.get('alive:running').catch(() => null);
 
-  if (tid) {
+  // 无指针 = 无任务(创建任务必写指针): 直接 return, 绝不 list
+  if (!tid) return null;
 
-    const t = await env.KV.get('alive:' + tid, { type: 'json' }).catch(() => null);
+  const t = await env.KV.get('alive:' + tid, { type: 'json' }).catch(() => null);
 
-    if (t && t.status === 'running') return tid;
+  if (t && t.status === 'running') return tid;
 
-    // 指针悬空: 清掉
-    await env.KV.delete('alive:running').catch(() => {});
-
-  }
-
-  // fallback: 兼容旧指针缺失(部署过渡期)的兜底扫描, 命中后写新指针
-  const list = await env.KV.list({ prefix: 'alive:' }).catch(() => null);
-
-  if (!list || !list.keys) return null;
-
-  for (const k of list.keys) {
-
-    if (k.name === 'alive:lock' || k.name === 'alive:running') continue;
-
-    const t = await env.KV.get(k.name, { type: 'json' }).catch(() => null);
-
-    if (t && t.status === 'running') {
-
-      await env.KV.put('alive:running', t.taskId, { expirationTtl: 7200 }).catch(() => {});
-
-      return t.taskId;
-
-    }
-
-  }
+  // 指针悬空(任务已过期/已完成): 清指针即可, 任务 key 有 TTL 自动消失, 不 list
+  await env.KV.delete('alive:running').catch(() => {});
 
   return null;
 
@@ -6618,21 +6596,10 @@ async function processAliveQueue(env, taskId) {
 
   } else {
 
-    const list = await env.KV.list({ prefix: 'alive:' }).catch(() => null);
+    // 无 taskId 的兼容路径(仅手动调用): 指针缺失才扫一次
+    const tid = await env.KV.get('alive:running').catch(() => null);
 
-    if (!list || !list.keys || list.keys.length === 0) return;
-
-    for (const k of list.keys) {
-
-      if (k.name === 'alive:lock' || k.name === 'alive:running') continue;
-
-      const t = await env.KV.get(k.name, { type: 'json' }).catch(() => null);
-
-      if (!t || t.status !== 'running') continue;
-
-      if (!best || t.createdAt < best.createdAt) best = t;
-
-    }
+    best = tid ? await env.KV.get('alive:' + tid, { type: 'json' }).catch(() => null) : null;
 
   }
 
