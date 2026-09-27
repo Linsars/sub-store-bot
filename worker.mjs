@@ -27,7 +27,7 @@
 import { ProxyUtils } from './proxy-utils.esm.js';
 import net from 'node:net';
 
-const BOT_VERSION = '2.36.25';
+const BOT_VERSION = '2.36.26';
 
 // ==================== 工具函数 ====================
 
@@ -1864,15 +1864,19 @@ async function fetchSub(url, uid, env, progress) {
 }
 
   // 直连全失败 → 走反代（绕过 CF Worker 被 CF 防护拦截）
+  // PROXY_URL 支持逗号分隔多个反代, 按序尝试, 第一个成功即停
+  const proxyList = (env.PROXY_URL || '').split(',').map(s => s.trim()).filter(Boolean);
 
-  if (!bestText && env.PROXY_URL) {
+  for (const oneProxy of proxyList) {
+
+    if (bestText) break;
 
     if (progress) await Promise.race([progress({ type: 'proxy' }).catch(() => {}), new Promise(r => setTimeout(r, 5000))]);
 
     try {
 
       // 自动补 url= 前缀，兼容 PROXY_URL 以 & 结尾或缺 url= 的配置
-      let proxyBase = env.PROXY_URL;
+      let proxyBase = oneProxy;
       if (!/url=/.test(proxyBase)) {
         if (!proxyBase.endsWith('&') && !proxyBase.endsWith('?')) proxyBase += (proxyBase.includes('?') ? '&' : '?');
         proxyBase += 'url=';
@@ -1911,7 +1915,7 @@ async function fetchSub(url, uid, env, progress) {
 
       }
 
-    } catch { /* proxy fail, ignore */ }
+    } catch { /* this proxy fail, try next */ }
 
   }
 
